@@ -1,0 +1,24 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Yale Parcel Box",
+        "description": "Adds activity monitoring, PIN management, and delivery mode to your Yale lock. Uses the OAuth token from your existing Yale integration."
+      },
+      "select_lock": {
+        "title": "Select Lock",
+        "description": "Choose the house and lock to use as your parcel box.",
+        "data": {
+          "house_id": "House",
+          "lock_id": "Lock ID",
+          "lock_name": "Lock Name"
+        }
+      }
+    },
+    "error": {
+      "no_core": "Yale integration not found. Set up the core Yale integration first.",
+      "no_houses": "No houses found on your Yale account.",
+      "cannot_connect": "Cannot connect to Yale API. Try again later."
+    }
+  }
+}

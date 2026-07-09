@@ -1,0 +1,11 @@
+{
+  "domain": "yale_parcel",
+  "name": "Yale Parcel Box",
+  "codeowners": ["@domocn"],
+  "config_flow": true,
+  "dependencies": ["yale"],
+  "documentation": "https://github.com/Domocn/ha-yale-parcel",
+  "iot_class": "cloud_polling",
+  "requirements": [],
+  "version": "2.0.0"
+}
