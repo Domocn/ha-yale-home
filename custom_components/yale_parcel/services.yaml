@@ -1,0 +1,52 @@
+enable_delivery_mode:
+  name: Enable Delivery Mode
+  description: Wakes the lock and enables the delivery PIN for courier access.
+  target:
+    entity:
+      integration: yale_parcel
+      domain: lock
+
+disable_delivery_mode:
+  name: Disable Delivery Mode
+  description: Disables the delivery PIN to secure the parcel box.
+  target:
+    entity:
+      integration: yale_parcel
+      domain: lock
+
+create_temp_pin:
+  name: Create Temporary PIN
+  description: Create a temporary PIN code for one-time delivery access.
+  target:
+    entity:
+      integration: yale_parcel
+      domain: lock
+  fields:
+    pin:
+      name: PIN Code
+      description: The PIN code to create (4-8 digits).
+      required: true
+      example: "12345"
+      selector:
+        text: {}
+    user_id:
+      name: User ID
+      description: The user ID to associate with this PIN.
+      required: false
+      example: "2614b866-5acc-41fb-ba91-14a972152e53"
+      selector:
+        text: {}
+    start_time:
+      name: Start Time
+      description: Access start time in ISO format.
+      required: false
+      example: "2026-07-09T08:00:00.000Z"
+      selector:
+        text: {}
+    end_time:
+      name: End Time
+      description: Access end time in ISO format.
+      required: false
+      example: "2026-07-09T20:00:00.000Z"
+      selector:
+        text: {}

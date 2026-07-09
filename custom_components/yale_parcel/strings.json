@@ -1,0 +1,26 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Yale Parcel Box",
+        "description": "Enter your Yale API access token to connect.",
+        "data": {
+          "access_token": "Access Token"
+        }
+      },
+      "select_lock": {
+        "title": "Select Lock",
+        "description": "Choose the house and lock to control.",
+        "data": {
+          "house_id": "House",
+          "lock_id": "Lock ID",
+          "lock_name": "Lock Name"
+        }
+      }
+    },
+    "error": {
+      "invalid_token": "Invalid access token",
+      "cannot_connect": "Failed to connect to Yale API"
+    }
+  }
+}
