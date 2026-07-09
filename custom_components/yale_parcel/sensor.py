@@ -1,95 +1,128 @@
-"""Activity sensors for Yale Parcel Box."""
-from __future__ import annotations
-import logging
-from datetime import datetime
-from typing import Any
+"""Activity sensors derived from the Yale activity log.
 
-from homeassistant.components.sensor import SensorEntity, SensorDeviceClass
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity_platform import AddEntitiesCallback
+Names come from the activity payload (callingUser = who acted, otherUser = the
+code/person affected), since the guest-list endpoint is 403 for this token.
+"""
+from __future__ import annotations
+
+from datetime import datetime, timezone
+
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
+
 from .const import DOMAIN, CONF_LOCK_ID
 
-_LOGGER = logging.getLogger(__name__)
+_ACTION_LABELS = {
+    "lock": "Locked",
+    "unlock": "Unlocked",
+    "onetouchlock": "Locked",
+    "remotelock": "Locked remotely",
+    "remoteunlock": "Unlocked remotely",
+    "pinunlock": "Unlocked with code",
+    "loadpin": "Added code",
+    "load_pin": "Added code",
+    "deletepin": "Removed code",
+    "delete_pin": "Removed code",
+    "removedpin": "Removed code",
+    "removepin": "Removed code",
+    "enablepin": "Enabled code",
+    "disablepin": "Disabled code",
+    "associatedbridgeonline": "Bridge online",
+    "associatedbridgeoffline": "Bridge offline",
+    "doorclosed": "Door closed",
+    "dooropen": "Door opened",
+}
 
-SENSOR_TYPES = [
-    ("last_action", "Last Action", None),
-    ("last_operator", "Last Operator", None),
-    ("credential_type", "Last Credential", None),
-    ("last_unlock_time", "Last Unlock Time", SensorDeviceClass.TIMESTAMP),
-    ("activity_summary", "Activity Summary", None),
-]
+
+def _name(user) -> str:
+    if not isinstance(user, dict):
+        return ""
+    first = user.get("FirstName") or user.get("firstName") or ""
+    last = user.get("LastName") or user.get("lastName") or ""
+    return f"{first} {last}".strip()
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry,
-                            async_add_entities: AddEntitiesCallback) -> None:
-    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    lock_id = entry.data[CONF_LOCK_ID]
+def _pretty_action(action: str) -> str:
+    return _ACTION_LABELS.get(action.lower(), action.replace("_", " ").capitalize())
+
+
+async def async_setup_entry(hass, entry, async_add_entities):
+    store = hass.data[DOMAIN][entry.entry_id]
+    coordinator = store["coordinator"]
+    lock_id = store["data"][CONF_LOCK_ID]
     async_add_entities([
-        YaleActivitySensor(coordinator, lock_id, st, name, dc)
-        for st, name, dc in SENSOR_TYPES
+        YaleActivitySensor(coordinator, lock_id, "Last action", "mdi:gesture-tap",
+                           lambda a, c: _pretty_action(a.get("action", ""))),
+        YaleActivitySensor(coordinator, lock_id, "Last operator", "mdi:account",
+                           lambda a, c: _name(a.get("callingUser")) or "—"),
+        YaleActivitySensor(coordinator, lock_id, "Last code affected", "mdi:dialpad",
+                           lambda a, c: _name(a.get("otherUser")) or "—"),
+        YaleActivitySensor(coordinator, lock_id, "Activity summary", "mdi:history",
+                           _summary),
+        YaleActivitySensor(coordinator, lock_id, "Codes", "mdi:counter",
+                           lambda a, c: len((c.data or {}).get("pins", []))),
+        YaleTimeSensor(coordinator, lock_id),
     ])
 
 
-class YaleActivitySensor(SensorEntity):
+def _summary(activity: dict, coordinator) -> str:
+    action = _pretty_action(activity.get("action", ""))
+    actor = _name(activity.get("callingUser"))
+    affected = _name(activity.get("otherUser"))
+    if affected:
+        action = f"{action} ({affected})"
+    return f"{action} by {actor}".strip() if actor else action
+
+
+class YaleActivitySensor(CoordinatorEntity, SensorEntity):
     _attr_has_entity_name = True
 
-    def __init__(self, coordinator, lock_id, sensor_type, name, device_class):
-        self._coordinator = coordinator
-        self._sensor_type = sensor_type
-        self._attr_name = f"Parcel Box {name}"
-        self._attr_unique_id = f"yale_parcel_{lock_id}_{sensor_type}"
-        self._attr_device_class = device_class
-
-    @property
-    def available(self):
-        return self._coordinator.last_update_success
+    def __init__(self, coordinator, lock_id, label, icon, extractor):
+        super().__init__(coordinator)
+        self._extractor = extractor
+        self._attr_name = label
+        self._attr_icon = icon
+        self._attr_unique_id = f"{lock_id}_{label.lower().replace(' ', '_')}"
+        self._attr_device_info = DeviceInfo(identifiers={("yale", lock_id)})
 
     @property
     def native_value(self):
-        data = self._coordinator.data
-        if not data: return None
-        activities = data.get("activities", [])
-        last = activities[0] if activities else None
-
-        if self._sensor_type == "last_action":
-            return last.action.title() if last and last.action else "unknown"
-        elif self._sensor_type == "last_operator":
-            return (last.operated_by or "unknown") if last else "unknown"
-        elif self._sensor_type == "credential_type":
-            return (getattr(last, "credential_type", None) or "unknown") if last else "unknown"
-        elif self._sensor_type == "last_unlock_time":
-            for a in (activities or []):
-                if a.action == "unlock" and a.activity_start_time:
-                    return datetime.fromtimestamp(a.activity_start_time / 1000)
+        last = (self.coordinator.data or {}).get("last_activity")
+        try:
+            if self._attr_name == "Codes":
+                return self._extractor({}, self.coordinator)
+            if not last:
+                return None
+            return self._extractor(last, self.coordinator)
+        except Exception:  # noqa: BLE001
             return None
-        elif self._sensor_type == "activity_summary":
-            if last:
-                a = (last.action or "unknown").title()
-                w = last.operated_by or "unknown"
-                c = getattr(last, "credential_type", None) or "unknown"
-                return f"{a} by {w} ({c})"
-            return "No recent activity"
-        return None
+
+
+class YaleTimeSensor(CoordinatorEntity, SensorEntity):
+    _attr_has_entity_name = True
+    _attr_name = "Last activity time"
+    _attr_icon = "mdi:clock-outline"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+
+    def __init__(self, coordinator, lock_id):
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{lock_id}_last_activity_time"
+        self._attr_device_info = DeviceInfo(identifiers={("yale", lock_id)})
 
     @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        if self._sensor_type != "last_action": return {}
-        data = self._coordinator.data
-        if not data: return {}
-        last = data.get("last_activity")
-        if not last: return {}
-        return {
-            "action": last.action,
-            "activity_start_time": last.activity_start_time,
-            "operated_by": last.operated_by,
-            "was_pushed": last.was_pushed,
-            "device_id": last.device_id,
-        }
-
-    async def async_added_to_hass(self):
-        self.async_on_remove(self._coordinator.async_add_listener(self.async_write_ha_state))
-
-    @property
-    def should_poll(self):
-        return False
+    def native_value(self):
+        last = (self.coordinator.data or {}).get("last_activity")
+        if not isinstance(last, dict):
+            return None
+        raw = last.get("dateTime") or last.get("entryTime")
+        if raw is None:
+            return None
+        try:
+            # Yale activity timestamps are epoch milliseconds.
+            ts = float(raw)
+            if ts > 1e12:
+                ts /= 1000.0
+            return datetime.fromtimestamp(ts, tz=timezone.utc)
+        except (TypeError, ValueError):
+            return None

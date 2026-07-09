@@ -1,109 +1,80 @@
-# Yale Parcel Box - Home Assistant Integration
+# Yale Parcel Box — Home Assistant integration
 
-Custom integration for Yale/August smart locks used as parcel delivery boxes. Built on the reverse-engineered Yale API (`api.aaecosystem.com`).
+Turn a Yale/August smart lock into a **managed parcel box** in Home Assistant.
 
-## Features
+This is a **companion** to the built-in [`yale`](https://www.home-assistant.io/integrations/yale/)
+integration — not a replacement. It reuses the token from your existing Yale
+integration (no extra login) and adds the code-management and activity features
+core Yale doesn't expose. Your normal `lock.*` entity keeps working as-is.
 
-- **Lock control** — lock/unlock via Yale cloud API (no Bluetooth required)
-- **Activity monitoring** — see who unlocked, what credential they used, and when
-- **Delivery mode** — enable/disable a delivery PIN for couriers with one click
-- **Temporary PINs** — create one-time PINs for delivery drivers
-- **Auto-refreshing token** — API token self-extends on every poll, never expires
-- **Cloud polling** — 60-second activity polling via DataUpdateCoordinator
+## What you get
 
-## Why This Exists
+Attached to your existing Yale lock device:
 
-The official Yale integration works for basic lock control but doesn't expose:
-- PIN code management (enable/disable/create)
-- Activity log monitoring (who unlocked, what credential)
-- Delivery mode workflows
+- **A switch per entry code** — turn any courier/guest code on or off at a glance.
+- **An editable value per code** — type a new number to rotate that code.
+- **Activity sensors** — last action, who did it, which code was affected, a
+  human-readable summary (e.g. *"Unlocked with code (Amazon Delivery) by Dom"*),
+  a code count, and the last activity timestamp.
+- **Services** — `enable_delivery_mode`, `disable_delivery_mode`,
+  `create_temp_pin` (time-limited), `rotate_pin`, `delete_pin`.
+- **An event** — `yale_parcel_activity` fires on every new activity, so you can
+  automate on deliveries (chime, notify, snap a camera still…).
 
-This integration fills those gaps, specifically designed for parcel box use cases.
+## Requirements
+
+- The core **Yale** integration set up and working (this borrows its token).
+- A Yale/August lock (tested on the **MD-04I** parcel lock).
 
 ## Installation
 
-### HACS (Recommended)
+### HACS
+[![Open in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=domocn&repository=ha-yale-parcel&category=integration)
 
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=domocn&repository=ha-yale-parcel&category=integration)
-
-Or manually:
-1. HACS → Integrations → ⋮ → Custom repositories
-2. URL: `https://github.com/domocn/ha-yale-parcel`
-3. Category: Integration
+Or: HACS → ⋮ → Custom repositories → `https://github.com/Domocn/ha-yale-parcel` → Integration.
 
 ### Manual
-
-Copy `custom_components/yale_parcel/` to your Home Assistant `custom_components/` directory.
+Copy `custom_components/yale_parcel/` into your HA `config/custom_components/`, then restart.
 
 ## Setup
 
-1. Settings → Devices & Services → Add Integration → **Yale Parcel Box**
-2. Enter your Yale API access token (auto-filled if you have the Yale integration)
-3. Select your house and lock
-4. Done
+Settings → Devices & Services → **Add Integration** → **Yale Parcel Box**.
+It finds your lock automatically from the Yale integration and picks it from a
+list — no IDs or tokens to paste.
 
-## Entities Created
-
-| Entity | Type | Description |
-|---|---|---|
-| `lock.yale_parcel_*` | Lock | Lock/unlock with operator attributes |
-| `sensor.parcel_box_last_action` | Sensor | Last activity (Unlock, Lock, etc.) |
-| `sensor.parcel_box_last_operator` | Sensor | Who performed the last action |
-| `sensor.parcel_box_last_credential` | Sensor | Credential type used (pin/mobile/key) |
-| `sensor.parcel_box_last_unlock_time` | Sensor | Timestamp of last unlock |
-| `sensor.parcel_box_activity_summary` | Sensor | Human-readable: "Unlock by Becca Parcel (pin)" |
-
-## Services
-
-### `yale_parcel.enable_delivery_mode`
-Wakes the lock and enables the delivery PIN for courier access.
-
-### `yale_parcel.disable_delivery_mode`
-Disables the delivery PIN to secure the parcel box.
-
-### `yale_parcel.create_temp_pin`
-Creates a temporary PIN for one-time delivery access.
-
-| Parameter | Required | Description |
-|---|---|---|
-| `pin` | Yes | PIN code (4-8 digits) |
-| `user_id` | No | User ID to associate with PIN |
-| `start_time` | No | Access start (ISO format) |
-| `end_time` | No | Access end (ISO format) |
-
-## Example Automations
+## Example automation
 
 ```yaml
-# Enable delivery mode when you leave home
+# Announce a delivery when a courier code is used
 automation:
-  - trigger: state
-    entity_id: person.dom
-    to: "not_home"
-  - action: yale_parcel.enable_delivery_mode
-    target:
-      entity_id: lock.yale_parcel_parcel_box
-
-# Record delivery and disable delivery mode
-  - trigger: state
-    entity_id: lock.yale_parcel_parcel_box
-    to: "unlocked"
-  - condition: template
-    value_template: >
-      {{ states('sensor.parcel_box_last_credential') == 'pin' }}
-  - action: yale_parcel.disable_delivery_mode
-    target:
-      entity_id: lock.yale_parcel_parcel_box
+  - alias: Parcel delivered
+    trigger:
+      - platform: event
+        event_type: yale_parcel_activity
+    condition:
+      - condition: template
+        value_template: "{{ 'code' in trigger.event.data.activity.action | lower }}"
+    action:
+      - service: notify.mobile_app
+        data:
+          message: >
+            📦 {{ states('sensor.parcel_box_activity_summary') }}
 ```
 
-## How It Works
+## How it works & known limits
 
-This integration talks directly to the Yale cloud API at `api.aaecosystem.com`. It uses the same API that the Yale Home Android app uses, reverse-engineered from the APK.
+Talks to the Yale cloud (`api.aaecosystem.com`) using the OAuth token from the
+core Yale integration.
 
-- **Authentication**: Uses the OAuth token from your existing Yale integration
-- **Lock control**: `PUT /remoteoperate/{lock_id}/{action}`
-- **Activity log**: `GET /houses/{house_id}/activities`
-- **PIN management**: `POST /locks/{lock_id}/pins` with command-based actions
-- **Token refresh**: Every API response includes a fresh token in the `x-access-token` header
+- **Code management** (`POST /locks/{id}/pins`) — enable / disable / rotate /
+  delete / temporary codes. Works fully.
+- **Activity + names** (`GET /houses/{id}/activities`) — a code's owner name is
+  learned the **first time that code is used** (Yale only returns names in the
+  activity log), then remembered. Newly-created codes show as *"Code (NNNN)"*
+  until first use.
+- **Creating brand-new named guests is app-only.** Yale returns `403` on the
+  guest-management endpoints for this token, so new courier profiles must be
+  added in the Yale Home app. Everything on an existing code is controllable here.
 
 ## License
 

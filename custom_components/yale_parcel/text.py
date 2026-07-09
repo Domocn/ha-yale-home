@@ -1,14 +1,12 @@
-"""A switch per PIN code — on = enabled, off = disabled."""
+"""An editable text per code — setting a new value rotates that PIN."""
 from __future__ import annotations
 
-from homeassistant.components.switch import SwitchEntity
+from homeassistant.components.text import TextEntity, TextMode
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import _wake_then
-from .const import DOMAIN, CONF_LOCK_ID, ACTION_ENABLE, ACTION_DISABLE
-
-_ON_STATES = {"enabled", "loaded", "active", "1", "true", "on"}
+from .const import DOMAIN, CONF_LOCK_ID, ACTION_LOAD
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -22,7 +20,7 @@ async def async_setup_entry(hass, entry, async_add_entities):
         for pin in (coordinator.data or {}).get("pins", []):
             if pin.pin and pin.pin not in known:
                 known.add(pin.pin)
-                new.append(YalePinSwitch(coordinator, store, lock_id, pin.pin))
+                new.append(YaleCodeValue(coordinator, store, lock_id, pin.pin))
         if new:
             async_add_entities(new)
 
@@ -30,16 +28,20 @@ async def async_setup_entry(hass, entry, async_add_entities):
     entry.async_on_unload(coordinator.async_add_listener(_sync))
 
 
-class YalePinSwitch(CoordinatorEntity, SwitchEntity):
+class YaleCodeValue(CoordinatorEntity, TextEntity):
     _attr_has_entity_name = True
-    _attr_icon = "mdi:dialpad"
+    _attr_mode = TextMode.TEXT
+    _attr_native_min = 4
+    _attr_native_max = 8
+    _attr_pattern = r"\d{4,8}"
+    _attr_icon = "mdi:form-textbox-password"
 
     def __init__(self, coordinator, store, lock_id, pin):
         super().__init__(coordinator)
         self._store = store
         self._lock_id = lock_id
-        self._pin = pin
-        self._attr_unique_id = f"{lock_id}_pin_{pin}"
+        self._pin = pin  # current identity; updated after a rotate
+        self._attr_unique_id = f"{lock_id}_code_{pin}"
         self._attr_device_info = DeviceInfo(identifiers={("yale", lock_id)})
 
     def _record(self):
@@ -52,39 +54,21 @@ class YalePinSwitch(CoordinatorEntity, SwitchEntity):
     def name(self):
         p = self._record()
         owner = (p.owner if p else "") or "Code"
-        return f"{owner} ({self._pin})"
+        return f"{owner} code"
 
     @property
-    def is_on(self):
+    def native_value(self):
         p = self._record()
-        return bool(p and str(p.state).lower() in _ON_STATES)
+        return p.pin if p else self._pin
 
     @property
     def available(self):
         return self._record() is not None
 
-    @property
-    def extra_state_attributes(self):
-        p = self._record()
-        if not p:
-            return {}
-        return {
-            "owner": p.owner,
-            "access_type": p.access_type,
-            "user_id": p.user_id,
-            "state": p.state,
-        }
-
-    async def async_turn_on(self, **kwargs):
+    async def async_set_value(self, value: str) -> None:
         p = self._record()
         await _wake_then(self._store["session"], self._store["token"], self._lock_id,
-                         action=ACTION_ENABLE, pin=self._pin,
+                         action=ACTION_LOAD, pin=value,
                          user_id=p.user_id if p else None)
-        await self.coordinator.async_request_refresh()
-
-    async def async_turn_off(self, **kwargs):
-        p = self._record()
-        await _wake_then(self._store["session"], self._store["token"], self._lock_id,
-                         action=ACTION_DISABLE, pin=self._pin,
-                         user_id=p.user_id if p else None)
+        self._pin = value
         await self.coordinator.async_request_refresh()

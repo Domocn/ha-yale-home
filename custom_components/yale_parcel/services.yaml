@@ -1,41 +1,69 @@
 enable_delivery_mode:
-  name: Enable Delivery Mode
-  description: Wakes the lock and enables the delivery PIN.
-  target:
-    entity:
-      integration: yale_parcel
-      domain: switch
+  name: Enable delivery mode
+  description: Wakes the lock and enables the delivery PIN so couriers can open the box.
 
 disable_delivery_mode:
-  name: Disable Delivery Mode
+  name: Disable delivery mode
   description: Disables the delivery PIN to secure the parcel box.
-  target:
-    entity:
-      integration: yale_parcel
-      domain: switch
 
 create_temp_pin:
-  name: Create Temporary PIN
-  description: Create a one-time PIN for delivery access.
+  name: Create temporary PIN
+  description: Create a time-limited PIN for one-off delivery access.
   fields:
     pin:
-      name: PIN Code
-      required: true
-      example: "12345"
+      name: PIN code
+      description: 4-8 digit code. Leave blank to generate a random one.
+      required: false
+      example: "1234"
       selector:
         text: {}
     user_id:
       name: User ID
+      description: Optional Yale user ID to associate the code with.
       required: false
       selector:
         text: {}
     start_time:
-      name: Start Time (ISO)
+      name: Start time (ISO)
       required: false
       selector:
         text: {}
     end_time:
-      name: End Time (ISO)
+      name: End time (ISO)
+      required: false
+      selector:
+        text: {}
+
+rotate_pin:
+  name: Rotate PIN
+  description: Replace a code with a new value (random if none given). Also available by editing a code's text entity.
+  fields:
+    user_id:
+      name: User ID
+      description: The user whose code to rotate.
+      required: false
+      selector:
+        text: {}
+    new_pin:
+      name: New PIN
+      description: New 4-8 digit code. Leave blank to generate a random one.
+      required: false
+      example: "5678"
+      selector:
+        text: {}
+
+delete_pin:
+  name: Delete PIN
+  description: Remove a code from the lock.
+  fields:
+    pin:
+      name: PIN code
+      required: true
+      example: "1234"
+      selector:
+        text: {}
+    user_id:
+      name: User ID
       required: false
       selector:
         text: {}
