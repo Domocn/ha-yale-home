@@ -1,22 +1,15 @@
-"""Config flow for Yale Parcel Box integration."""
+"""Config flow for Yale Parcel Box - reads token from core yale integration."""
 from __future__ import annotations
 
 import voluptuous as vol
 from homeassistant import config_entries
-from homeassistant.core import callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-import homeassistant.helpers.config_validation as cv
+
+from yalexs.api_async import ApiAsync
+from yalexs.const import Brand
 
 from .const import (
     DOMAIN,
-    API_BASE_URL,
-    API_KEY,
-    HEADER_API_KEY,
-    HEADER_ACCESS_TOKEN,
-    ENDPOINT_HOUSES,
-    ENDPOINT_LOCKS,
-    ENDPOINT_PINS,
-    CONF_ACCESS_TOKEN,
     CONF_HOUSE_ID,
     CONF_LOCK_ID,
     CONF_LOCK_NAME,
@@ -26,48 +19,66 @@ from .const import (
 
 
 class YaleParcelConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for Yale Parcel Box."""
+    """Handle a config flow for Yale Parcel Box.
+
+    Reads the OAuth token from the existing core yale integration.
+    """
 
     VERSION = 1
 
     async def async_step_user(self, user_input=None):
-        """Handle the initial step."""
+        """Handle the initial step - auto-discovers token from core integration."""
         errors = {}
 
-        if user_input is not None:
-            # Validate the access token by fetching houses
-            token = user_input[CONF_ACCESS_TOKEN]
-            session = async_get_clientsession(self.hass)
+        # Get token from core yale integration
+        access_token = None
+        for entry in self.hass.config_entries.async_entries("yale"):
+            token_data = entry.data.get("token", {})
+            access_token = token_data.get("access_token")
+            if access_token:
+                break
 
-            headers = {
-                HEADER_API_KEY: API_KEY,
-                HEADER_ACCESS_TOKEN: token,
-            }
+        if not access_token:
+            errors["base"] = "no_core_integration"
+            return self.async_show_form(
+                step_id="user",
+                data_schema=vol.Schema({}),
+                errors=errors,
+            )
 
-            try:
-                resp = await session.get(
-                    f"{API_BASE_URL}{ENDPOINT_HOUSES}",
-                    headers=headers,
+        # Validate token and discover houses/locks
+        session = async_get_clientsession(self.hass)
+        api = ApiAsync(session, brand=Brand.YALE_GLOBAL)
+
+        try:
+            houses_resp = await api.async_get_houses(access_token)
+            houses = await houses_resp.json()
+            if not houses:
+                errors["base"] = "no_houses"
+                return self.async_show_form(
+                    step_id="user",
+                    data_schema=vol.Schema({}),
+                    errors=errors,
                 )
-                if resp.status == 200:
-                    houses = await resp.json()
-                    if houses:
-                        # Store token and houses for next step
-                        self._token = token
-                        self._houses = houses
-                        return await self.async_step_select_lock()
-                else:
-                    errors["base"] = "invalid_token"
-            except Exception:
-                errors["base"] = "cannot_connect"
 
-        return self.async_show_form(
-            step_id="user",
-            data_schema=vol.Schema({
-                vol.Required(CONF_ACCESS_TOKEN): str,
-            }),
-            errors=errors,
-        )
+            self._token = access_token
+            self._api = api
+            self._session = session
+            self._houses = houses
+
+            if user_input is not None:
+                return await self.async_step_select_lock(user_input)
+
+            # Auto-advance if there's only one house
+            return await self.async_step_select_lock()
+
+        except Exception:
+            errors["base"] = "cannot_connect"
+            return self.async_show_form(
+                step_id="user",
+                data_schema=vol.Schema({}),
+                errors=errors,
+            )
 
     async def async_step_select_lock(self, user_input=None):
         """Select the lock to control."""
@@ -77,61 +88,51 @@ class YaleParcelConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             house_id = user_input[CONF_HOUSE_ID]
             lock_id = user_input[CONF_LOCK_ID]
 
-            # Fetch PINs to find delivery PIN
-            session = async_get_clientsession(self.hass)
-            headers = {
-                HEADER_API_KEY: API_KEY,
-                HEADER_ACCESS_TOKEN: self._token,
-            }
-
             try:
-                resp = await session.get(
-                    f"{API_BASE_URL}{ENDPOINT_PINS.format(lock_id=lock_id)}",
-                    headers=headers,
+                # Get locks for the selected house
+                locks = await self._api.async_get_operable_locks(self._token)
+                lock_data = None
+                for lock in locks:
+                    if lock.device_id == lock_id:
+                        lock_data = lock
+                        break
+
+                # Get PINs to find a delivery PIN
+                pins = await self._api.async_get_pins(self._token, lock_id)
+                delivery_pin = None
+                delivery_user_id = None
+                for pin in pins:
+                    if pin.access_type == "always":
+                        delivery_pin = pin.pin
+                        delivery_user_id = pin.user_id
+                        break
+
+                lock_name = lock_data.device_name if lock_data else user_input.get(CONF_LOCK_NAME, lock_id)
+
+                return self.async_create_entry(
+                    title=f"Yale Parcel Box ({lock_name})",
+                    data={
+                        CONF_HOUSE_ID: house_id,
+                        CONF_LOCK_ID: lock_id,
+                        CONF_LOCK_NAME: lock_name,
+                        CONF_DELIVERY_PIN: delivery_pin,
+                        CONF_DELIVERY_PIN_USER_ID: delivery_user_id,
+                    },
                 )
-                if resp.status == 200:
-                    pins_data = await resp.json()
-                    pins = pins_data.get("loaded", [])
-
-                    # Find a PIN suitable for delivery
-                    delivery_pin = None
-                    delivery_user_id = None
-                    for pin in pins:
-                        if pin.get("accessType") == "always":
-                            delivery_pin = pin.get("pin")
-                            delivery_user_id = pin.get("userID")
-                            break
-
-                    return self.async_create_entry(
-                        title=f"Yale Parcel Box ({user_input.get(CONF_LOCK_NAME, lock_id)})",
-                        data={
-                            CONF_ACCESS_TOKEN: self._token,
-                            CONF_HOUSE_ID: house_id,
-                            CONF_LOCK_ID: lock_id,
-                            CONF_LOCK_NAME: user_input.get(CONF_LOCK_NAME, lock_id),
-                            CONF_DELIVERY_PIN: delivery_pin,
-                            CONF_DELIVERY_PIN_USER_ID: delivery_user_id,
-                        },
-                    )
             except Exception:
                 errors["base"] = "cannot_connect"
 
-        # Build house/lock selection
-        houses = self._houses
-        lock_choices = {}
-        for house in houses:
-            house_id = house["HouseID"]
-            house_name = house.get("HouseName", house_id)
-            # We need to fetch locks for each house
-            # For now, use the known lock
-            lock_choices[f"{house_id}/C0DDB145F77449A89DBF547D138E366D"] = f"{house_name} - Parcel Box"
+        # Build house choices
+        house_choices = {}
+        for house in self._houses:
+            hid = house.get("HouseID", house.get("_id", ""))
+            hname = house.get("HouseName", hid)
+            house_choices[hid] = hname
 
         return self.async_show_form(
             step_id="select_lock",
             data_schema=vol.Schema({
-                vol.Required(CONF_HOUSE_ID): vol.In(
-                    {h["HouseID"]: h.get("HouseName", h["HouseID"]) for h in houses}
-                ),
+                vol.Required(CONF_HOUSE_ID): vol.In(house_choices),
                 vol.Required(CONF_LOCK_ID): str,
                 vol.Optional(CONF_LOCK_NAME, default="Parcel Box"): str,
             }),

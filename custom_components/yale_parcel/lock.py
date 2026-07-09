@@ -1,4 +1,4 @@
-"""Lock platform for Yale Parcel Box."""
+"""Lock platform for Yale Parcel Box - uses yalexs library."""
 from __future__ import annotations
 
 import logging
@@ -20,13 +20,18 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the Yale Parcel Box lock."""
-    coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    client = hass.data[DOMAIN][entry.entry_id]["client"]
+    data = hass.data[DOMAIN][entry.entry_id]
+    coordinator = data["coordinator"]
+    api = data["api"]
+    session = data["session"]
+    access_token = data["access_token"]
 
     async_add_entities([
         YaleParcelLock(
             coordinator=coordinator,
-            client=client,
+            api=api,
+            session=session,
+            access_token=access_token,
             lock_id=entry.data[CONF_LOCK_ID],
             name=entry.data.get(CONF_LOCK_NAME, "Parcel Box"),
         )
@@ -34,14 +39,16 @@ async def async_setup_entry(
 
 
 class YaleParcelLock(LockEntity):
-    """Representation of a Yale Parcel Box lock."""
+    """Representation of a Yale Parcel Box lock using yalexs."""
 
     _attr_has_entity_name = True
 
-    def __init__(self, coordinator, client, lock_id: str, name: str):
+    def __init__(self, coordinator, api, session, access_token, lock_id: str, name: str):
         """Initialize the lock."""
         self._coordinator = coordinator
-        self._client = client
+        self._api = api
+        self._session = session
+        self._access_token = access_token
         self._lock_id = lock_id
         self._attr_name = name
         self._attr_unique_id = f"yale_parcel_{lock_id}"
@@ -67,29 +74,28 @@ class YaleParcelLock(LockEntity):
             return {}
 
         attrs = {}
-        lock_data = data.get("lock_data", {})
+        lock_data = data.get("lock_data")
         if lock_data:
-            attrs["mac_address"] = lock_data.get("macAddress")
-            attrs["house_name"] = lock_data.get("HouseName")
+            attrs["mac_address"] = lock_data.mac_address
+            attrs["serial_number"] = lock_data.serial_number
+            attrs["house_name"] = lock_data.house_name
 
         last_activity = data.get("last_activity")
         if last_activity:
-            calling_user = last_activity.get("callingUser", {})
-            attrs["last_operator"] = f"{calling_user.get('FirstName', '')} {calling_user.get('LastName', '')}".strip()
-            attrs["last_action"] = last_activity.get("action", "")
-            info = last_activity.get("info", {})
-            attrs["credential_type"] = info.get("credentialType", "")
+            attrs["last_operator"] = last_activity.operated_by
+            attrs["last_action"] = last_activity.action
+            attrs["was_pushed"] = last_activity.was_pushed
 
         return attrs
 
     async def async_lock(self, **kwargs: Any) -> None:
-        """Lock the lock."""
-        await self._client.async_lock(self._lock_id)
+        """Lock the lock using yalexs."""
+        await self._api.async_lock(self._access_token, self._lock_id)
         await self._coordinator.async_request_refresh()
 
     async def async_unlock(self, **kwargs: Any) -> None:
-        """Unlock the lock."""
-        await self._client.async_unlock(self._lock_id)
+        """Unlock the lock using yalexs."""
+        await self._api.async_unlock(self._access_token, self._lock_id)
         await self._coordinator.async_request_refresh()
 
     async def async_added_to_hass(self) -> None:
@@ -102,7 +108,3 @@ class YaleParcelLock(LockEntity):
     def should_poll(self) -> bool:
         """No need to poll, coordinator handles it."""
         return False
-
-    async def async_update(self) -> None:
-        """Update the entity."""
-        await self._coordinator.async_request_refresh()

@@ -1,4 +1,4 @@
-"""Sensor platform for Yale Parcel Box activity monitoring."""
+"""Sensor platform for Yale Parcel Box - uses yalexs activity objects."""
 from __future__ import annotations
 
 import logging
@@ -35,7 +35,7 @@ async def async_setup_entry(
 
 
 class YaleParcelActivitySensor(SensorEntity):
-    """Sensor showing Yale Parcel Box activity data."""
+    """Sensor showing Yale Parcel Box activity from yalexs data."""
 
     _attr_has_entity_name = True
 
@@ -67,36 +67,32 @@ class YaleParcelActivitySensor(SensorEntity):
 
         if self._sensor_type == "last_action":
             if last:
-                return last.get("action", "unknown").title()
+                return last.action.title() if last.action else "unknown"
             return "unknown"
 
         elif self._sensor_type == "last_operator":
             if last:
-                user = last.get("callingUser", {})
-                return f"{user.get('FirstName', '')} {user.get('LastName', '')}".strip()
+                return last.operated_by or "unknown"
             return "unknown"
 
         elif self._sensor_type == "credential_type":
             if last:
-                info = last.get("info", {})
-                return info.get("credentialType", "unknown")
+                return getattr(last, "credential_type", "unknown") or "unknown"
             return "unknown"
 
         elif self._sensor_type == "last_unlock_time":
             for activity in (activities or []):
-                if activity.get("action") == "unlock":
-                    ts = activity.get("dateTime")
+                if activity.action == "unlock":
+                    ts = activity.activity_start_time
                     if ts:
                         return datetime.fromtimestamp(ts / 1000)
             return None
 
         elif self._sensor_type == "activity_summary":
             if last:
-                action = last.get("action", "unknown").title()
-                user = last.get("callingUser", {})
-                who = f"{user.get('FirstName', '')} {user.get('LastName', '')}".strip()
-                info = last.get("info", {})
-                cred = info.get("credentialType", "unknown")
+                action = (last.action or "unknown").title()
+                who = last.operated_by or "unknown"
+                cred = getattr(last, "credential_type", None) or "unknown"
                 return f"{action} by {who} ({cred})"
             return "No recent activity"
 
@@ -113,11 +109,11 @@ class YaleParcelActivitySensor(SensorEntity):
             last = data.get("last_activity")
             if last:
                 return {
-                    "action": last.get("action"),
-                    "date_time": last.get("dateTime"),
-                    "calling_user": last.get("callingUser"),
-                    "other_user": last.get("otherUser"),
-                    "info": last.get("info"),
+                    "action": last.action,
+                    "activity_start_time": last.activity_start_time,
+                    "operated_by": last.operated_by,
+                    "was_pushed": last.was_pushed,
+                    "device_id": last.device_id,
                 }
 
         return {}
