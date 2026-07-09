@@ -1,8 +1,7 @@
 {
   "name": "Yale Parcel Box",
   "content_in_root": false,
-  "zip_release": true,
-  "filename": "yale_parcel.zip",
+  "zip_release": false,
   "homeassistant": "2024.1.0",
   "render_readme": true,
   "hide_default_branch": false,
