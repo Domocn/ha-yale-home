@@ -1,4 +1,10 @@
-"""An editable text per code — setting a new value rotates that PIN."""
+"""An editable text per code — setting a new value rotates that PIN.
+
+The entity name mirrors the matching switch ("Owner (pin) ✏️") so that on the
+auto-generated device page — where controls sort alphabetically — each code's
+edit box lands directly next to its on/off switch instead of clumping into a
+separate block. Names are generated live, so they stay paired after a rotation.
+"""
 from __future__ import annotations
 
 from homeassistant.components.text import TextEntity, TextMode
@@ -54,7 +60,8 @@ class YaleCodeValue(CoordinatorEntity, TextEntity):
     def name(self):
         p = self._record()
         owner = (p.owner if p else "") or "Code"
-        return f"{owner} code"
+        pin = p.pin if p else self._pin
+        return f"{owner} ({pin}) ✏️"
 
     @property
     def native_value(self):
