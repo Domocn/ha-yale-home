@@ -58,10 +58,12 @@ def _headers(token: str, *, json: bool = False) -> dict[str, str]:
 
 
 async def _wake(session, token, lock_id):
+    # Yale's gateway rejects a body-less PUT with 415 (Unsupported Media Type),
+    # so send an empty JSON body — aiohttp then sets Content-Type: application/json.
     url = (f"{API_BASE_URL}"
            f"{ENDPOINT_LOCK_OPERATE.format(lock_id=lock_id, action='status')}"
            "?v=2.3.1&type=async&intent=wakeup")
-    async with session.put(url, headers=_headers(token), timeout=30) as resp:
+    async with session.put(url, headers=_headers(token), json={}, timeout=30) as resp:
         resp.raise_for_status()
 
 
