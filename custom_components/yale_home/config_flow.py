@@ -12,6 +12,7 @@ from __future__ import annotations
 import os
 import tempfile
 import logging
+import re
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.components.file_upload import process_uploaded_file
