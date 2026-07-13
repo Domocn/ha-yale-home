@@ -1,10 +1,12 @@
-"""Yale Parcel Box — companion to the core `yale` integration.
+"""Yale Parcel Box / Door Lock — companion to the core `yale` integration.
 
-Adds courier-code management (a switch + an editable value per code), delivery-
-mode services, and activity sensors for a Yale/August lock used as a parcel box.
-Reuses the core `yale` integration's OAuth token, read live from its config entry
-so it never expires. Guest/credential *management* endpoints are 403 for this
-token (Yale gates those to the app's own login), so codes are managed via
+Adds PIN-code management (a switch + an editable value per code), access-mode
+services, and activity sensors for a Yale/August lock. The lock can be used as
+a parcel box (courier deliveries) or a regular door (Airbnb / home guest access);
+behaviour is identical, only the language differs (see CONF_DEVICE_TYPE). Reuses
+the core `yale` integration's OAuth token, read live from its config entry so it
+never expires. Guest/credential *management* endpoints are 403 for this token
+(Yale gates those to the app's own login), so codes are managed via
 /locks/{id}/pins and owner names are learned from the activity log.
 """
 from __future__ import annotations
@@ -12,10 +14,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import re
+import secrets
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from yalexs.api_async import ApiAsync
@@ -64,20 +69,30 @@ async def _wake(session, token, lock_id):
            f"{ENDPOINT_LOCK_OPERATE.format(lock_id=lock_id, action='status')}"
            "?v=2.3.1&type=async&intent=wakeup")
     async with session.put(url, headers=_headers(token), json={}, timeout=30) as resp:
-        resp.raise_for_status()
+        if resp.status >= 400:
+            body = await resp.text()
+            raise HomeAssistantError(f"Yale wake failed ({resp.status}): {body[:200]}")
 
 
 async def _pin_cmd(session, token, lock_id, *, action, pin,
-                   access_type="always", user_id=None, access_times=None):
+                   access_type="always", user_id=None, partner_user_id=None,
+                   access_times=None):
     url = f"{API_BASE_URL}{ENDPOINT_PINS.format(lock_id=lock_id)}"
     cmd = {"action": action, "pin": pin, "accessType": access_type}
+    # Yale requires a user on every pin command: "value must contain at least
+    # one of [userID, partnerUserID]". partnerUserID is self-invented — ideal
+    # for guest/door codes, since creating named guests is app-only (403).
     if user_id:
         cmd["userID"] = user_id
+    elif partner_user_id:
+        cmd["partnerUserID"] = partner_user_id
     if access_times:
         cmd["accessTimes"] = access_times
     async with session.post(url, headers=_headers(token, json=True),
                             json={"commands": [cmd]}, timeout=30) as resp:
-        resp.raise_for_status()
+        if resp.status >= 400:
+            body = await resp.text()
+            raise HomeAssistantError(f"Yale {action} pin failed ({resp.status}): {body[:200]}")
 
 
 async def _wake_then(session, token, lock_id, **kwargs):
@@ -123,7 +138,7 @@ async def _discover(session, token) -> dict | None:
     return {
         CONF_LOCK_ID: lock_id,
         CONF_HOUSE_ID: house_id,
-        CONF_LOCK_NAME: getattr(lock, "device_name", "Parcel Box"),
+        CONF_LOCK_NAME: getattr(lock, "device_name", "Yale Lock"),
         CONF_DELIVERY_PIN: delivery_pin,
         CONF_DELIVERY_PIN_USER_ID: delivery_uid,
     }
@@ -189,40 +204,64 @@ def _register_activity_events(hass: HomeAssistant, coordinator) -> None:
     coordinator.async_add_listener(_fire)
 
 
+def _partner_id_for(name: str | None) -> str:
+    """A stable-ish, unique partnerUserID for a guest/door code (Yale requires a
+    user on every pin command; named guests are app-only, so we invent one)."""
+    slug = ""
+    if name:
+        slug = re.sub(r"[^a-z0-9]+", "_", name.strip().lower()).strip("_")
+    return f"europa_{slug or 'guest'}_{secrets.token_hex(3)}"
+
+
 def _register_services(hass, session, token, data, coordinator) -> None:
     lock_id = data[CONF_LOCK_ID]
+    delivery_pin = data.get(CONF_DELIVERY_PIN)
+    delivery_uid = data.get(CONF_DELIVERY_PIN_USER_ID)
+
+    async def _run(label: str, coro) -> None:
+        """Run a pin command, record the outcome, then refresh. The exception is
+        re-raised so HA reports the failure — but the message is now Yale's actual
+        error (see _pin_cmd), and the diagnostic sensor records it too."""
+        try:
+            await coro
+            coordinator.record_pin(label, None)
+        except Exception as err:  # noqa: BLE001
+            coordinator.record_pin(None, str(err))
+            raise
+        finally:
+            await coordinator.async_request_refresh()
 
     async def _enable(call: ServiceCall):
-        await _wake_then(session, token, lock_id, action=ACTION_ENABLE,
-                         pin=data[CONF_DELIVERY_PIN],
-                         user_id=data.get(CONF_DELIVERY_PIN_USER_ID))
-        await coordinator.async_request_refresh()
+        await _run("Enable access PIN",
+                   _wake_then(session, token, lock_id, action=ACTION_ENABLE,
+                              pin=delivery_pin, user_id=delivery_uid))
 
     async def _disable(call: ServiceCall):
-        await _wake_then(session, token, lock_id, action=ACTION_DISABLE,
-                         pin=data[CONF_DELIVERY_PIN],
-                         user_id=data.get(CONF_DELIVERY_PIN_USER_ID))
-        await coordinator.async_request_refresh()
+        await _run("Disable access PIN",
+                   _wake_then(session, token, lock_id, action=ACTION_DISABLE,
+                              pin=delivery_pin, user_id=delivery_uid))
 
     async def _create_temp(call: ServiceCall):
         pin = call.data.get("pin") or random_pin()
         start, end = call.data.get("start_time"), call.data.get("end_time")
         times = f"DTSTART={start};DTEND={end}" if start and end else None
-        await _wake_then(session, token, lock_id, action=ACTION_LOAD, pin=pin,
-                         access_type="temporary", user_id=call.data.get("user_id"),
-                         access_times=times)
-        await coordinator.async_request_refresh()
+        user_id = call.data.get("user_id")
+        partner = None if user_id else _partner_id_for(call.data.get("name"))
+        await _run("Create temporary PIN",
+                   _wake_then(session, token, lock_id, action=ACTION_LOAD, pin=pin,
+                              access_type="temporary", user_id=user_id,
+                              partner_user_id=partner, access_times=times))
 
     async def _rotate(call: ServiceCall):
         new = call.data.get("new_pin") or random_pin()
-        await _wake_then(session, token, lock_id, action=ACTION_LOAD, pin=new,
-                         user_id=call.data.get("user_id"))
-        await coordinator.async_request_refresh()
+        await _run("Rotate PIN",
+                   _wake_then(session, token, lock_id, action=ACTION_LOAD, pin=new,
+                              user_id=call.data.get("user_id")))
 
     async def _delete(call: ServiceCall):
-        await _wake_then(session, token, lock_id, action=ACTION_DELETE,
-                         pin=call.data.get("pin"), user_id=call.data.get("user_id"))
-        await coordinator.async_request_refresh()
+        await _run("Delete PIN",
+                   _wake_then(session, token, lock_id, action=ACTION_DELETE,
+                              pin=call.data.get("pin"), user_id=call.data.get("user_id")))
 
     hass.services.async_register(DOMAIN, "enable_delivery_mode", _enable)
     hass.services.async_register(DOMAIN, "disable_delivery_mode", _disable)

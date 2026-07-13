@@ -1,11 +1,8 @@
-"""Data coordinator — activities, PIN codes, and guest names.
+"""Data coordinator — lock state, activities, PIN codes, guests, and learned names.
 
-Guest/credential management endpoints (guestlist, manageduser, credentials) are
-403 for the borrowed OAuth token — Yale restricts those to the app's own login.
-So code owner names come from the activity log (a courier is named the first
-time its code is used) and are then **persisted** so they stick across restarts.
-PINs are fetched raw because yalexs' Pin parser requires a `firstName` these
-codes don't have (KeyError otherwise).
+Guest/credential *management* endpoints are owner-scope (the app-login token
+unlocks them). Code owner names are still learned from the activity log the
+first time a code is used and cached, so names persist across restarts.
 """
 from __future__ import annotations
 
@@ -20,15 +17,17 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
+from .auth import expiry_iso
 from .const import (
-    API_BASE_URL, API_KEY, HEADER_ACCESS_TOKEN, HEADER_API_KEY, DOMAIN, SCAN_INTERVAL,
+    API_BASE_URL, BRAND_VALUE, HEADER_ACCESS_TOKEN, HEADER_API_KEY,
+    HEADER_BRANDING, USER_AGENT,
+    CONF_EMAIL, CONF_HOUSE_ID, CONF_LOCK_ID, CONF_PASSWORD,
+    ENDPOINT_ACTIVITIES, ENDPOINT_GUESTLIST, ENDPOINT_LOCK_INFO, ENDPOINT_PINS,
+    SCAN_INTERVAL,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-# Activity page sizes to try, largest first. Yale caps the limit and 403s an
-# over-large request, so we step down until one is accepted and remember it.
-# A deeper page names more couriers (each is named only when their code is used).
 _ACTIVITY_LIMITS = [100, 50, 25, 15]
 
 
@@ -39,18 +38,16 @@ def _name(user: dict[str, Any]) -> str:
 
 
 def _parse_yale_time(value) -> datetime | None:
-    """Parse a Yale timestamp (ISO string or epoch ms) into an aware UTC datetime."""
     if value is None or value == "":
         return None
     if isinstance(value, (int, float)):
         f = float(value)
-        if f > 1e12:  # epoch milliseconds
+        if f > 1e12:
             f /= 1000.0
         return dt_util.utc_from_timestamp(f)
     s = str(value)
     parsed = dt_util.parse_datetime(s)
     if parsed is None:
-        # last-ditch: bare epoch as a string
         try:
             return _parse_yale_time(float(s))
         except (ValueError, TypeError):
@@ -59,12 +56,6 @@ def _parse_yale_time(value) -> datetime | None:
 
 
 def _pin_schedule(d: dict[str, Any]) -> tuple[datetime | None, datetime | None]:
-    """Extract (valid_from, expires_at) from a raw pin record.
-
-    Yale returns accessStartTime/accessEndTime for temporary codes; the raw
-    accessTimes iCal string (DTSTART=...;DTEND=...) is a fallback when those
-    are missing.
-    """
     vf = _parse_yale_time(d.get("accessStartTime"))
     ex = _parse_yale_time(d.get("accessEndTime"))
     at = d.get("accessTimes")
@@ -79,7 +70,6 @@ def _pin_schedule(d: dict[str, Any]) -> tuple[datetime | None, datetime | None]:
 
 
 def _humanize(td: timedelta) -> str:
-    """Compact relative-time phrase, e.g. '3 h', '2 days', '5 min'."""
     mins = int(td.total_seconds() // 60)
     if mins < 1:
         return "less than a min"
@@ -94,7 +84,6 @@ def _humanize(td: timedelta) -> str:
 
 
 def format_expiry(expires_at: datetime | None, now: datetime | None = None) -> str:
-    """Plain-language expiry for users (not devs). Used in attributes + sensors."""
     if expires_at is None:
         return "Permanent — no expiry"
     if now is None:
@@ -106,37 +95,66 @@ def format_expiry(expires_at: datetime | None, now: datetime | None = None) -> s
     return f"Expires {local:%a %d %b %H:%M} (in {_humanize(delta)})"
 
 
-class YaleParcelCoordinator(DataUpdateCoordinator[dict[str, Any]]):
-    """Polls activity + PINs for one lock/house."""
+class YaleHomeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
+    """Polls lock state, activities, PINs and guests for one lock/house."""
 
-    def __init__(self, hass: HomeAssistant, session, token: str, house_id: str, lock_id: str) -> None:
-        super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=timedelta(seconds=SCAN_INTERVAL))
+    def __init__(self, hass: HomeAssistant, session, auth,
+                 email: str, password: str, house_id: str, lock_id: str,
+                 api_key: str) -> None:
+        super().__init__(hass, _LOGGER, name="yale_home",
+                         update_interval=timedelta(seconds=SCAN_INTERVAL))
         self.session = session
-        self.token = token
+        self.auth = auth
+        self._api_key = api_key
+        self._email = email
+        self._password = password
+        self._data = {CONF_EMAIL: email, CONF_PASSWORD: password,
+                      CONF_HOUSE_ID: house_id, CONF_LOCK_ID: lock_id}
         self.house_id = house_id
         self.lock_id = lock_id
         self._names: dict[str, str] = {}
-        self._store: Store = Store(hass, 1, f"{DOMAIN}_names_{lock_id}")
+        self._store = Store(hass, 1, f"yale_home_names_{lock_id}")
         self._loaded = False
-        self._act_limit = 0  # 0 = probe; otherwise the last accepted page size
-        # Last pin-command result, surfaced via a diagnostic sensor so a failed
-        # create/rotate/delete shows the real Yale error in the UI (not an opaque 500).
+        self._act_limit = 0
+        self._token: str | None = None
+        self._token_expiry: datetime | None = None
         self.last_pin_error: str | None = None
         self.last_pin_ok: str | None = None
         self.last_pin_at: datetime | None = None
 
-    def _headers(self) -> dict[str, str]:
-        return {HEADER_API_KEY: API_KEY, HEADER_ACCESS_TOKEN: self.token}
+    @property
+    def api_key(self) -> str:
+        """The per-user API key (extracted from the user's own APK at setup)."""
+        return self._api_key
+
+    # --- token -------------------------------------------------------------
+    async def get_token(self) -> str:
+        """Return a valid owner token, refreshing first if near expiry."""
+        token, expiry = await self.auth.ensure_valid(
+            self._email, self._password, self._token, self._token_expiry)
+        self._token, self._token_expiry = token, expiry
+        return token
 
     def record_pin(self, ok: str | None, error: str | None) -> None:
-        """Remember the last pin-command outcome for the diagnostic sensor."""
         self.last_pin_ok = ok
         self.last_pin_error = error
         self.last_pin_at = dt_util.now()
 
-    async def _get(self, path: str) -> Any:
-        async with self.session.get(f"{API_BASE_URL}{path}", headers=self._headers()) as resp:
-            resp.raise_for_status()
+    # --- HTTP --------------------------------------------------------------
+    def _headers(self, token: str) -> dict[str, str]:
+        return {HEADER_API_KEY: self._api_key, HEADER_BRANDING: BRAND_VALUE,
+                HEADER_ACCESS_TOKEN: token, "User-Agent": USER_AGENT}
+
+    async def _get(self, path: str, *, retry_on_401: bool = True) -> Any:
+        token = await self.get_token()
+        url = f"{API_BASE_URL}{path}"
+        async with self.session.get(url, headers=self._headers(token), timeout=30) as resp:
+            if resp.status == 401 and retry_on_401:
+                # Token expired mid-session — force a refresh and retry once.
+                self._token = None
+                return await self._get(path, retry_on_401=False)
+            if resp.status >= 400:
+                raise UpdateFailed(f"Yale GET {path} failed ({resp.status})")
             return await resp.json()
 
     async def _load_names(self) -> None:
@@ -148,15 +166,14 @@ class YaleParcelCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._loaded = True
 
     async def _get_activities(self) -> Any:
-        """Fetch the deepest activity page the API will accept (remembering it)."""
         tries = [self._act_limit] if self._act_limit else _ACTIVITY_LIMITS
         last_err: Exception | None = None
         for lim in tries:
             try:
-                data = await self._get(f"/houses/{self.house_id}/activities?limit={lim}")
+                data = await self._get(f"{ENDPOINT_ACTIVITIES.format(house_id=self.house_id)}?limit={lim}")
                 self._act_limit = lim
                 return data
-            except Exception as err:  # noqa: BLE001 — step down to a smaller page
+            except Exception as err:  # noqa: BLE001
                 last_err = err
                 self._act_limit = 0
         raise last_err  # type: ignore[misc]
@@ -164,8 +181,14 @@ class YaleParcelCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _async_update_data(self) -> dict[str, Any]:
         await self._load_names()
         try:
+            lock = await self._get(ENDPOINT_LOCK_INFO.format(lock_id=self.lock_id))
             activities = await self._get_activities()
-            pins_raw = await self._get(f"/locks/{self.lock_id}/pins")
+            pins_raw = await self._get(ENDPOINT_PINS.format(lock_id=self.lock_id))
+            try:
+                guests = await self._get(ENDPOINT_GUESTLIST.format(house_id=self.house_id))
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Guest list unavailable: %s", err)
+                guests = None
         except Exception as err:  # noqa: BLE001
             raise UpdateFailed(f"Yale poll failed: {err}") from err
 
@@ -183,8 +206,7 @@ class YaleParcelCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self._store.async_save(self._names)
 
         items = pins_raw if isinstance(pins_raw, list) else (
-            pins_raw.get("pins") or pins_raw.get("loaded") or []
-        )
+            pins_raw.get("pins") or pins_raw.get("loaded") or [])
         pins = []
         for d in items:
             if not isinstance(d, dict):
@@ -201,8 +223,10 @@ class YaleParcelCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ))
 
         return {
+            "lock": lock,
             "activities": activities,
             "pins": pins,
             "users": dict(self._names),
+            "guests": guests,
             "last_activity": activities[0] if activities else None,
         }

@@ -1,11 +1,11 @@
 {
-  "domain": "yale_parcel",
-  "name": "Yale Parcel Box & Door Lock",
+  "domain": "yale_home",
+  "name": "Yale Home",
   "codeowners": ["@domocn"],
   "config_flow": true,
-  "dependencies": ["yale"],
+  "dependencies": [],
   "documentation": "https://github.com/Domocn/ha-yale-parcel",
   "iot_class": "cloud_polling",
-  "requirements": [],
-  "version": "2.4.0"
+  "requirements": ["lief", "pycryptodome"],
+  "version": "3.0.0"
 }

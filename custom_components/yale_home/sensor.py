@@ -1,13 +1,12 @@
-"""Activity sensors derived from the Yale activity log.
-
-Names come from the activity payload (callingUser = who acted, otherUser = the
-code/person affected), since the guest-list endpoint is 403 for this token.
-"""
+"""Activity, expiry, battery and connectivity sensors for a Yale lock."""
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.components.binary_sensor import (BinarySensorDeviceClass,
+                                                    BinarySensorEntity)
+from homeassistant.components.sensor import (SensorDeviceClass, SensorEntity,
+                                             StateType)
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.util import dt as dt_util
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -15,26 +14,21 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from .const import DOMAIN, CONF_LOCK_ID
 from .coordinator import format_expiry
 
+
 _ACTION_LABELS = {
-    "lock": "Locked",
-    "unlock": "Unlocked",
-    "onetouchlock": "Locked",
-    "remotelock": "Locked remotely",
-    "remoteunlock": "Unlocked remotely",
-    "pinunlock": "Unlocked with code",
-    "loadpin": "Added code",
-    "load_pin": "Added code",
-    "deletepin": "Removed code",
-    "delete_pin": "Removed code",
-    "removedpin": "Removed code",
-    "removepin": "Removed code",
-    "enablepin": "Enabled code",
-    "disablepin": "Disabled code",
-    "associatedbridgeonline": "Bridge online",
-    "associatedbridgeoffline": "Bridge offline",
-    "doorclosed": "Door closed",
-    "dooropen": "Door opened",
+    "lock": "Locked", "unlock": "Unlocked", "onetouchlock": "Locked",
+    "remotelock": "Locked remotely", "remoteunlock": "Unlocked remotely",
+    "pinunlock": "Unlocked with code", "loadpin": "Added code",
+    "load_pin": "Added code", "deletepin": "Removed code", "delete_pin": "Removed code",
+    "removedpin": "Removed code", "removepin": "Removed code",
+    "enablepin": "Enabled code", "disablepin": "Disabled code",
+    "associatedbridgeonline": "Bridge online", "associatedbridgeoffline": "Bridge offline",
+    "doorclosed": "Door closed", "dooropen": "Door opened",
 }
+
+
+def _pretty_action(action: str) -> str:
+    return _ACTION_LABELS.get(action.lower(), action.replace("_", " ").capitalize())
 
 
 def _name(user) -> str:
@@ -45,14 +39,10 @@ def _name(user) -> str:
     return f"{first} {last}".strip()
 
 
-def _pretty_action(action: str) -> str:
-    return _ACTION_LABELS.get(action.lower(), action.replace("_", " ").capitalize())
-
-
 async def async_setup_entry(hass, entry, async_add_entities):
     store = hass.data[DOMAIN][entry.entry_id]
     coordinator = store["coordinator"]
-    lock_id = store["data"][CONF_LOCK_ID]
+    lock_id = entry.data[CONF_LOCK_ID]
     async_add_entities([
         YaleActivitySensor(coordinator, lock_id, "Last action", "mdi:gesture-tap",
                            lambda a, c: _pretty_action(a.get("action", ""))),
@@ -60,13 +50,14 @@ async def async_setup_entry(hass, entry, async_add_entities):
                            lambda a, c: _name(a.get("callingUser")) or "—"),
         YaleActivitySensor(coordinator, lock_id, "Last code affected", "mdi:dialpad",
                            lambda a, c: _name(a.get("otherUser")) or "—"),
-        YaleActivitySensor(coordinator, lock_id, "Activity summary", "mdi:history",
-                           _summary),
+        YaleActivitySensor(coordinator, lock_id, "Activity summary", "mdi:history", _summary),
         YaleActivitySensor(coordinator, lock_id, "Codes", "mdi:counter",
                            lambda a, c: len((c.data or {}).get("pins", []))),
         YaleTimeSensor(coordinator, lock_id),
         YaleNextExpirySensor(coordinator, lock_id),
         YalePinCommandSensor(coordinator, lock_id),
+        YaleBatterySensor(coordinator, lock_id),
+        YaleConnectivitySensor(coordinator, lock_id),
     ])
 
 
@@ -88,10 +79,10 @@ class YaleActivitySensor(CoordinatorEntity, SensorEntity):
         self._attr_name = label
         self._attr_icon = icon
         self._attr_unique_id = f"{lock_id}_{label.lower().replace(' ', '_')}"
-        self._attr_device_info = DeviceInfo(identifiers={("yale", lock_id)})
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, lock_id)})
 
     @property
-    def native_value(self):
+    def native_value(self) -> StateType:
         last = (self.coordinator.data or {}).get("last_activity")
         try:
             if self._attr_name == "Codes":
@@ -112,7 +103,7 @@ class YaleTimeSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator, lock_id):
         super().__init__(coordinator)
         self._attr_unique_id = f"{lock_id}_last_activity_time"
-        self._attr_device_info = DeviceInfo(identifiers={("yale", lock_id)})
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, lock_id)})
 
     @property
     def native_value(self):
@@ -123,7 +114,6 @@ class YaleTimeSensor(CoordinatorEntity, SensorEntity):
         if raw is None:
             return None
         try:
-            # Yale activity timestamps are epoch milliseconds.
             ts = float(raw)
             if ts > 1e12:
                 ts /= 1000.0
@@ -133,8 +123,6 @@ class YaleTimeSensor(CoordinatorEntity, SensorEntity):
 
 
 class YaleNextExpirySensor(CoordinatorEntity, SensorEntity):
-    """Soon-expiring guest/temp code — the one-line 'when does a code expire' view."""
-
     _attr_has_entity_name = True
     _attr_name = "Next code expiry"
     _attr_icon = "mdi:timer-alert-outline"
@@ -143,7 +131,7 @@ class YaleNextExpirySensor(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator, lock_id):
         super().__init__(coordinator)
         self._attr_unique_id = f"{lock_id}_next_code_expiry"
-        self._attr_device_info = DeviceInfo(identifiers={("yale", lock_id)})
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, lock_id)})
 
     def _next(self):
         now = dt_util.now()
@@ -166,19 +154,13 @@ class YaleNextExpirySensor(CoordinatorEntity, SensorEntity):
     def extra_state_attributes(self):
         nxt = self._next()
         if not nxt:
-            return {"status": "No expiring codes" if (self.coordinator.data or {}).get("pins") else "—"}
+            pins = (self.coordinator.data or {}).get("pins")
+            return {"status": "No expiring codes" if pins else "—"}
         ex, p = nxt
-        return {
-            "code": p.pin,
-            "owner": p.owner or "—",
-            "expiry": format_expiry(ex),
-        }
+        return {"code": p.pin, "owner": p.owner or "—", "expiry": format_expiry(ex)}
 
 
 class YalePinCommandSensor(CoordinatorEntity, SensorEntity):
-    """Shows the result of the last pin service call — so a failed create/rotate
-    surfaces Yale's real error in the UI instead of an opaque 500."""
-
     _attr_has_entity_name = True
     _attr_name = "Last pin command"
     _attr_icon = "mdi:clipboard-list-outline"
@@ -186,7 +168,7 @@ class YalePinCommandSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, coordinator, lock_id):
         super().__init__(coordinator)
         self._attr_unique_id = f"{lock_id}_last_pin_command"
-        self._attr_device_info = DeviceInfo(identifiers={("yale", lock_id)})
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, lock_id)})
 
     @property
     def native_value(self):
@@ -203,3 +185,45 @@ class YalePinCommandSensor(CoordinatorEntity, SensorEntity):
             "result": "Error" if self.coordinator.last_pin_error else ("OK" if self.coordinator.last_pin_ok else "—"),
             "at": dt_util.as_local(self.coordinator.last_pin_at).isoformat() if self.coordinator.last_pin_at else None,
         }
+
+
+class YaleBatterySensor(CoordinatorEntity, SensorEntity):
+    _attr_has_entity_name = True
+    _attr_name = "Battery"
+    _attr_icon = "mdi:battery"
+    _attr_device_class = SensorDeviceClass.BATTERY
+    _attr_native_unit_of_measurement = "%"
+
+    def __init__(self, coordinator, lock_id):
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{lock_id}_battery"
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, lock_id)})
+
+    @property
+    def native_value(self):
+        lock = (self.coordinator.data or {}).get("lock") or {}
+        b = lock.get("battery")
+        if b is None:
+            return None
+        try:
+            return int(round(float(b)))
+        except (TypeError, ValueError):
+            return None
+
+
+class YaleConnectivitySensor(CoordinatorEntity, BinarySensorEntity):
+    _attr_has_entity_name = True
+    _attr_name = "Connectivity"
+    _attr_icon = "mdi:wifi"
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+
+    def __init__(self, coordinator, lock_id):
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{lock_id}_connectivity"
+        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, lock_id)})
+
+    @property
+    def is_on(self):
+        lock = (self.coordinator.data or {}).get("lock") or {}
+        bridge = (lock.get("Bridge") or {}).get("status") or {}
+        return bool(bridge.get("current"))

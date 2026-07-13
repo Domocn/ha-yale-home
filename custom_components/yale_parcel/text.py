@@ -9,10 +9,12 @@ from __future__ import annotations
 
 from homeassistant.components.text import TextEntity, TextMode
 from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.util import dt as dt_util
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import _wake_then
 from .const import DOMAIN, CONF_LOCK_ID, ACTION_LOAD
+from .coordinator import format_expiry
 
 
 async def async_setup_entry(hass, entry, async_add_entities):
@@ -71,6 +73,21 @@ class YaleCodeValue(CoordinatorEntity, TextEntity):
     @property
     def available(self):
         return self._record() is not None
+
+    @property
+    def extra_state_attributes(self):
+        p = self._record()
+        if not p:
+            return {}
+        attrs = {
+            "type": "Temporary" if getattr(p, "is_temporary", False) else "Permanent",
+            "expiry": format_expiry(getattr(p, "expires_at", None)),
+        }
+        if getattr(p, "expires_at", None):
+            attrs["expires_at"] = dt_util.as_local(p.expires_at).isoformat()
+        if getattr(p, "valid_from", None):
+            attrs["valid_from"] = dt_util.as_local(p.valid_from).isoformat()
+        return attrs
 
     async def async_set_value(self, value: str) -> None:
         p = self._record()

@@ -1,0 +1,9 @@
+{
+  "entity": {
+    "lock": {
+      "yale_home": {
+        "default": "mdi:lock"
+      }
+    }
+  }
+}

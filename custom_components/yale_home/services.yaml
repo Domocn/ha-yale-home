@@ -8,7 +8,7 @@ disable_delivery_mode:
 
 create_temp_pin:
   name: Create temporary PIN
-  description: Create a time-limited PIN for a one-off delivery or a guest stay. The code auto-expires at the end time and stops opening the lock.
+  description: Create a time-limited PIN for a one-off delivery or a guest stay. The code auto-expires at the end time.
   fields:
     pin:
       name: PIN code
@@ -76,5 +76,75 @@ delete_pin:
     user_id:
       name: User ID
       required: false
+      selector:
+        text: {}
+
+create_named_guest:
+  name: Create named guest
+  description: Create a named guest with their own entry code (the same as adding a guest in the Yale Home app). Works because this integration logs in as the lock owner.
+  fields:
+    first_name:
+      name: First name
+      required: true
+      example: "John"
+      selector:
+        text: {}
+    last_name:
+      name: Last name
+      required: false
+      example: "Smith"
+      selector:
+        text: {}
+    pin:
+      name: PIN code
+      description: 4-8 digit code. Leave blank to generate a random one.
+      required: false
+      example: "4821"
+      selector:
+        text: {}
+    access_type:
+      name: Access type
+      description: "always" = permanent code, "temporary" = expires at the end time.
+      required: false
+      example: "temporary"
+      selector:
+        select:
+          options:
+            - label: Permanent (always)
+              value: always
+            - label: Temporary (expires at end time)
+              value: temporary
+    start_time:
+      name: Start time
+      description: iCal compact UTC, e.g. 20260711T110000Z. Only used for temporary codes.
+      required: false
+      example: "20260711T110000Z"
+      selector:
+        text: {}
+    end_time:
+      name: End time (expiry)
+      description: iCal compact UTC, e.g. 20260713T110000Z. Only used for temporary codes.
+      required: false
+      example: "20260713T110000Z"
+      selector:
+        text: {}
+    other_user_id:
+      name: Guest user ID
+      description: Optional existing Yale guest user ID. Leave blank to create a new guest.
+      required: false
+      selector:
+        text: {}
+
+list_guests:
+  name: List guests
+  description: Fetches the house guest list and fires a yale_home_guestlist event with the result (and logs it).
+
+remove_guest:
+  name: Remove guest
+  description: Remove a guest's access from the lock.
+  fields:
+    other_user_id:
+      name: Guest user ID
+      required: true
       selector:
         text: {}

@@ -1,0 +1,55 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Yale Home — app file",
+        "description": "This integration uses the same key the official Yale Home app uses, but it never ships that key in its own code. Instead, you supply your own copy of the Yale Home app (an .apk file). The integration extracts the key from the app's encrypted library — using your own app, not a shared secret. Enter a **path to the .apk on your Home Assistant server** (e.g. /config/yale_home.apk), or a **download URL** (http/https). If you only have the base APK and not the arm64 split, get the split_config.arm64_v8a.apk from your phone (via an APK extractor app) or download a merged APK.",
+        "data": {
+          "apk": "APK file path or download URL"
+        }
+      },
+      "credentials": {
+        "title": "Yale Home — sign in",
+        "description": "Now sign in to the Yale cloud, the same way the Yale Home app does. Your password is stored encrypted by Home Assistant. Enter the email and password you use in the Yale Home app.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
+        }
+      },
+      "code": {
+        "title": "Verify your device",
+        "description": "For security, Yale emails a one-time 6-digit code to {email}. Enter it below to confirm this Home Assistant is allowed to access your account. **This is a one-time step** — after it, Home Assistant is a trusted device and will not ask for a code again unless you change your password.",
+        "data": {
+          "code": "Verification code"
+        }
+      },
+      "select_lock": {
+        "title": "Choose your lock",
+        "description": "Pick the lock to manage, and how it is used. A parcel box is for courier deliveries; a door is for Airbnb / home guest access. You can change this later from the integration's Configure button.",
+        "data": {
+          "lock_id": "Lock",
+          "house_id": "House ID",
+          "device_type": "Used as"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure Yale lock",
+        "description": "Change how this lock is used — a parcel box or a regular door. The lock and its codes stay the same; only the wording shown in Home Assistant changes.",
+        "data": {
+          "device_type": "Used as"
+        }
+      }
+    },
+    "error": {
+      "bad_apk": "Couldn't extract the key from that file. Make sure it's the Yale Home app (.apk) — or its arm64 split — not just the base APK.",
+      "invalid_auth": "Wrong email or password. Check them and try again.",
+      "invalid_code": "That verification code wasn't accepted. Check the email from Yale and try again — codes expire after a few minutes.",
+      "cannot_connect": "Couldn't reach the Yale service. Try again in a moment.",
+      "no_locks": "No locks were found on your Yale account.",
+      "no_email_verify": "Your account can't be verified by email. This integration currently supports email verification only."
+    },
+    "abort": {
+      "reconfigured": "Device type updated."
+    }
+  }
+}
