@@ -104,7 +104,7 @@ create_named_guest:
         text: {}
     access_type:
       name: Access type
-      description: "always" = permanent code, "temporary" = expires at the end time.
+      description: 'Use "always" for a permanent code, "temporary" to expire at the end time.'
       required: false
       example: "temporary"
       selector:
