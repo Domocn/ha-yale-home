@@ -28,10 +28,10 @@ show the **name of the guest/courier each code belongs to**.
 
 ## Getting your API key
 
-Setup asks for the Yale Home app's API key — a UUID. It's the same in every
-copy of the app and does nothing without your login (it's not a password), so
-it isn't a personal secret. It's not shipped here: extract it from your own copy
-of the app and paste it at setup.
+Setup asks for the Yale Home app's API key — a UUID. It's the same for everyone
+and useless without your login (it's not a password), so it isn't a personal
+secret. It isn't shipped here: it's stored in the Yale Home app, and you can read
+it from your own copy with any APK‑inspection tool, then paste it at setup.
 
 ## Installation (HACS — custom repository)
 
