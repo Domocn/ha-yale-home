@@ -14,6 +14,7 @@ import tempfile
 import logging
 import voluptuous as vol
 from homeassistant import config_entries
+from homeassistant.components.file_upload import process_uploaded_file
 from homeassistant.helpers import selector
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from yalexs.api_async import ApiAsync
@@ -66,37 +67,51 @@ class YaleHomeConfigFlow(config_entries.ConfigFlow, domain="yale_home"):
     VERSION = 1
 
     async def async_step_user(self, user_input=None):
-        """Step 1: supply the API key — either paste it directly, or provide
-        an APK file path/URL to extract it from."""
+        """Step 1: upload the Yale Home APK (or paste the key)."""
         errors: dict[str, str] = {}
         if user_input is not None:
-            source = user_input["apk"].strip()
-            # If it looks like a UUID, use it directly as the key.
-            if re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", source):
-                self._api_key = source
-                return await self.async_step_credentials()
-            # Otherwise treat it as a file path or URL to an APK.
-            session = async_get_clientsession(self.hass)
-            try:
-                if source.startswith(("http://", "https://")):
-                    path = await _download(source, session)
-                    try:
-                        self._api_key = await self.hass.async_add_executor_job(extract_api_key, path)
-                    finally:
-                        os.unlink(path)
+            file_id = user_input.get("apk_file")
+            pasted = (user_input.get("apk_key") or "").strip()
+            if file_id:
+                # Uploaded via the file picker — process it.
+                try:
+                    def _extract(fid):
+                        with process_uploaded_file(self.hass, fid) as path:
+                            return extract_api_key(str(path))
+                    self._api_key = await self.hass.async_add_executor_job(_extract, file_id)
+                except (ExtractionError, Exception) as err:
+                    _LOGGER.warning("APK upload extraction failed: %s", err)
+                    errors["base"] = "bad_apk"
                 else:
-                    self._api_key = await self.hass.async_add_executor_job(extract_api_key, source)
-            except ExtractionError as err:
-                _LOGGER.warning("APK key extraction failed: %s", err)
-                errors["base"] = "bad_apk"
-            except Exception as err:
-                _LOGGER.warning("APK step error: %s", err)
-                errors["base"] = "bad_apk"
+                    return await self.async_step_credentials()
+            elif pasted:
+                if re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", pasted):
+                    self._api_key = pasted
+                    return await self.async_step_credentials()
+                session = async_get_clientsession(self.hass)
+                try:
+                    if pasted.startswith(("http://", "https://")):
+                        path = await _download(pasted, session)
+                        try:
+                            self._api_key = await self.hass.async_add_executor_job(extract_api_key, path)
+                        finally:
+                            os.unlink(path)
+                    else:
+                        self._api_key = await self.hass.async_add_executor_job(extract_api_key, pasted)
+                except (ExtractionError, Exception) as err:
+                    _LOGGER.warning("APK key extraction failed: %s", err)
+                    errors["base"] = "bad_apk"
+                else:
+                    return await self.async_step_credentials()
             else:
-                return await self.async_step_credentials()
+                errors["base"] = "bad_apk"
         return self.async_show_form(
             step_id="user",
-            data_schema=vol.Schema({vol.Required("apk"): str}),
+            data_schema=vol.Schema({
+                vol.Optional("apk_file"): selector.FileSelector(
+                    selector.FileSelectorConfig(accept=".apk,application/vnd.android.package-archive")),
+                vol.Optional("apk_key"): str,
+            }),
             errors=errors,
         )
 

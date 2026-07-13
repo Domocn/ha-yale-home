@@ -2,10 +2,11 @@
   "config": {
     "step": {
       "user": {
-        "title": "Yale Home — API key",
-        "description": "Paste the Yale Home app's API key (a UUID like 2fcb4...). If you don't have it, you can instead provide a path to your Yale Home .apk file (or a download URL) and the integration will extract it for you.",
+        "title": "Yale Home — app file",
+        "description": "Upload your Yale Home app file (.apk) and the integration extracts the key from it automatically. Or, if you already have the key (a UUID), paste it in the text field below.",
         "data": {
-          "apk": "API key (UUID) or APK file path/URL"
+          "apk_file": "Upload Yale Home .apk file",
+          "apk_key": "Or paste the API key (UUID)"
         }
       },
       "credentials": {
