@@ -2,10 +2,10 @@
   "config": {
     "step": {
       "user": {
-        "title": "Yale Home — app file",
-        "description": "This integration uses the same key the official Yale Home app uses, but it never ships that key in its own code. Instead, you supply your own copy of the Yale Home app (an .apk file). The integration extracts the key from the app's encrypted library — using your own app, not a shared secret. Enter a **path to the .apk on your Home Assistant server** (e.g. /config/yale_home.apk), or a **download URL** (http/https). If you only have the base APK and not the arm64 split, get the split_config.arm64_v8a.apk from your phone (via an APK extractor app) or download a merged APK.",
+        "title": "Yale Home — API key",
+        "description": "Paste the Yale Home app's API key (a UUID like 2fcb4...). If you don't have it, you can instead provide a path to your Yale Home .apk file (or a download URL) and the integration will extract it for you.",
         "data": {
-          "apk": "APK file path or download URL"
+          "apk": "API key (UUID) or APK file path/URL"
         }
       },
       "credentials": {

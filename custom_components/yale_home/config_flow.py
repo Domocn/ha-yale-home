@@ -66,10 +66,16 @@ class YaleHomeConfigFlow(config_entries.ConfigFlow, domain="yale_home"):
     VERSION = 1
 
     async def async_step_user(self, user_input=None):
-        """Step 1: supply the Yale Home APK so we can extract the app key."""
+        """Step 1: supply the API key — either paste it directly, or provide
+        an APK file path/URL to extract it from."""
         errors: dict[str, str] = {}
         if user_input is not None:
             source = user_input["apk"].strip()
+            # If it looks like a UUID, use it directly as the key.
+            if re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", source):
+                self._api_key = source
+                return await self.async_step_credentials()
+            # Otherwise treat it as a file path or URL to an APK.
             session = async_get_clientsession(self.hass)
             try:
                 if source.startswith(("http://", "https://")):
