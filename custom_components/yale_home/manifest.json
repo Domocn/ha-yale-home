@@ -1,11 +1,16 @@
 {
   "domain": "yale_home",
   "name": "Yale Home",
-  "codeowners": ["@domocn"],
+  "codeowners": [
+    "@domocn"
+  ],
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/Domocn/ha-yale-parcel",
   "iot_class": "cloud_polling",
-  "requirements": ["lief", "pycryptodome"],
-  "version": "3.0.0"
+  "requirements": [
+    "lief",
+    "pycryptodome"
+  ],
+  "version": "3.1.0"
 }

@@ -37,6 +37,33 @@ def _name(user: dict[str, Any]) -> str:
     return f"{first} {last}".strip()
 
 
+def _guest_names(guests: Any) -> dict[str, str]:
+    """userID -> full name from a /guestlist response.
+
+    The owner-scope guest list is the one source that names EVERY code up front,
+    including ones a courier has never used. Yale returns it either as a map
+    keyed by userID (HouseGuestList) or, on some tenants, a flat list — handle
+    both, and tolerate a `{guestList: {...}}` / `{users: [...]}` wrapper.
+    """
+    if isinstance(guests, dict):
+        for wrapper in ("guestList", "guests", "users", "loaded"):
+            if isinstance(guests.get(wrapper), (dict, list)):
+                guests = guests[wrapper]
+                break
+    out: dict[str, str] = {}
+    if isinstance(guests, dict):
+        for uid, info in guests.items():
+            if isinstance(info, dict) and uid and _name(info):
+                out[str(uid)] = _name(info)
+    elif isinstance(guests, list):
+        for info in guests:
+            if isinstance(info, dict):
+                uid = info.get("UserID") or info.get("userID") or info.get("userId")
+                if uid and _name(info):
+                    out[str(uid)] = _name(info)
+    return out
+
+
 def _parse_yale_time(value) -> datetime | None:
     if value is None or value == "":
         return None
@@ -185,7 +212,8 @@ class YaleHomeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             activities = await self._get_activities()
             pins_raw = await self._get(ENDPOINT_PINS.format(lock_id=self.lock_id))
             try:
-                guests = await self._get(ENDPOINT_GUESTLIST.format(house_id=self.house_id))
+                guests = await self._get(
+                    ENDPOINT_GUESTLIST.format(house_id=self.house_id) + "?mergeDuplicates=true")
             except Exception as err:  # noqa: BLE001
                 _LOGGER.debug("Guest list unavailable: %s", err)
                 guests = None
@@ -193,6 +221,13 @@ class YaleHomeCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise UpdateFailed(f"Yale poll failed: {err}") from err
 
         learned = False
+        # Guest list (owner-scope) names EVERY code up front — even ones a
+        # courier has never used — so codes stop showing as a generic "Code".
+        for uid, nm in _guest_names(guests).items():
+            if self._names.get(uid) != nm:
+                self._names[uid] = nm
+                learned = True
+        # Activity log fills in / corrects a name the first time a code is used.
         for activity in activities or []:
             for key in ("callingUser", "otherUser"):
                 user = activity.get(key)
