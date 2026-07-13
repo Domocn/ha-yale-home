@@ -44,7 +44,7 @@ it from your own copy with any APK‑inspection tool, then paste it at setup.
 
 ## Setup
 
-1. **Paste your API key** (the UUID above).
+1. **Paste your API key** — the UUID from *Getting your API key* above.
 2. **Sign in** with the email + password you use in the Yale Home app. Your
    password is stored encrypted by Home Assistant and never leaves your instance.
 3. **Enter the one‑time code** Yale emails you — this makes your Home Assistant a
