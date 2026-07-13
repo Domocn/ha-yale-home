@@ -19,7 +19,8 @@ SMS_HASH = "ND83fRplcC3"
 
 # Auth flow endpoints.
 ENDPOINT_SIGNIN = "/v2/session/signin"
-ENDPOINT_VALIDATE_EMAIL = "/v2/validate/email"
+ENDPOINT_VALIDATION_EMAIL = "/v2/validation/email"  # send/request the emailed code
+ENDPOINT_VALIDATE_EMAIL = "/v2/validate/email"      # submit the entered code
 
 # Lock / house endpoints.
 ENDPOINT_LOCK_INFO = "/locks/{lock_id}"

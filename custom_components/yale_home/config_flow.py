@@ -20,7 +20,7 @@ from yalexs.const import Brand
 
 _LOGGER = logging.getLogger(__name__)
 
-from .auth import YaleAppAuth, YaleAuthError, expiry_iso
+from .auth import YaleAppAuth, YaleAuthError, expiry_iso, _token_expiry
 
 _KEY_RE = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
@@ -87,17 +87,23 @@ class YaleHomeConfigFlow(config_entries.ConfigFlow, domain="yale_home"):
                 self._install_id = auth.install_id
                 self._auth = auth
                 if result.need_verify and "email" in (result.verify_types or []):
-                    self._step_token = result.step_token
-                    return await self.async_step_code()
-                if result.need_verify:
-                    errors["base"] = "no_email_verify"
-                else:
                     try:
-                        self._token, self._expiry = await auth.get_owner_token(email, password)
-                    except YaleAuthError as err:
-                        errors["base"] = "invalid_auth" if err.status in (400, 401, 403, 409) else "cannot_connect"
+                        # Send the emailed code; returns the step token the
+                        # code-verification step must use.
+                        self._step_token = await auth.send_email_code(result.step_token, email)
+                    except YaleAuthError:
+                        errors["base"] = "cannot_connect"
                     else:
-                        return await self.async_step_select_lock()
+                        return await self.async_step_code()
+                elif result.need_verify:
+                    errors["base"] = "no_email_verify"
+                elif result.access_token:
+                    # Device already verified — token came straight from signin.
+                    self._token = result.access_token
+                    self._expiry = _token_expiry(result.access_token)
+                    return await self.async_step_select_lock()
+                else:
+                    errors["base"] = "invalid_auth"
         return self.async_show_form(
             step_id="credentials",
             data_schema=vol.Schema({
@@ -114,8 +120,8 @@ class YaleHomeConfigFlow(config_entries.ConfigFlow, domain="yale_home"):
         errors: dict[str, str] = {}
         if user_input is not None:
             try:
-                await self._auth.verify_email(self._step_token, self._email, user_input["code"])
-                self._token, self._expiry = await self._auth.get_owner_token(self._email, self._password)
+                self._token, self._expiry = await self._auth.verify_email(
+                    self._step_token, self._email, user_input["code"])
             except YaleAuthError:
                 errors["base"] = "invalid_code"
             else:

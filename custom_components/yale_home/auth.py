@@ -5,15 +5,16 @@ owner-scope `x-access-token` (the same token the app uses), enabling named-guest
 management and lock control — for any user, with just an email + password + one
 emailed verification code.
 
-Flow (all on https://api.aaecosystem.com):
+Flow (all on https://api.aaecosystem.com; tokens travel in response headers):
   1. POST /v2/session/signin  {identifierType:"email", identifier, credential,
-     installID, smsHashString}  -> {needVerify,...} + x-step-token header.
-     Yale auto-emails a 6-digit code to the user's email (no captcha).
-  2. POST /v2/validate/email   {code, identifier}  + x-step-token header
-     -> HTTP 200 (marks this installID a trusted device).
-  3. POST /v2/session/signin   (again, SAME installID + creds)
-     -> needVerify:false + x-access-token header  (owner JWT).
-  Refresh = repeat step 3 with the stored installID + creds (no code needed).
+     installID, smsHashString}  -> {needVerify:true, verifyTypes} + x-step-token
+     header (ST_signin).
+  2. POST /v2/validation/email  {identifier}  header x-step-token: ST_signin
+     -> emails the 6-digit code AND returns a NEW x-step-token (ST_validation).
+  3. POST /v2/validate/email  {code, identifier}  header x-step-token: ST_validation
+     -> x-access-token header = the owner session token.
+  Refresh = a plain signin with the now-trusted installID returns x-access-token
+  directly (needVerify:false), no code needed.
 """
 from __future__ import annotations
 
@@ -30,7 +31,7 @@ from homeassistant.exceptions import HomeAssistantError
 from .const import (
     API_BASE_URL, BRAND_VALUE, HEADER_ACCESS_TOKEN, HEADER_API_KEY,
     HEADER_BRANDING, HEADER_STEP_TOKEN, SMS_HASH, USER_AGENT,
-    ENDPOINT_SIGNIN, ENDPOINT_VALIDATE_EMAIL,
+    ENDPOINT_SIGNIN, ENDPOINT_VALIDATION_EMAIL, ENDPOINT_VALIDATE_EMAIL,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -81,7 +82,9 @@ class YaleAppAuth:
                 data = await resp.json()
             except Exception:  # noqa: BLE001
                 data = {}
-            return resp.status, data, dict(resp.headers)
+            # Tokens come back as response headers; lower-case for safe lookup.
+            hdrs = {k.lower(): v for k, v in resp.headers.items()}
+            return resp.status, data, hdrs
 
     # --- public API --------------------------------------------------------
     async def signin(self, email: str, password: str) -> SimpleNamespace:
@@ -101,30 +104,40 @@ class YaleAppAuth:
             verify_types=verify_types,
             require_recaptcha=bool(data.get("requireReCaptcha")),
             step_token=headers.get(HEADER_STEP_TOKEN, ""),
+            # Present when this installID is already verified (refresh path).
+            access_token=headers.get(HEADER_ACCESS_TOKEN, ""),
         )
 
-    async def verify_email(self, step_token: str, email: str, code: str) -> bool:
-        """Step 2/3: submit the emailed code. Marks this installID trusted."""
-        await self._post(ENDPOINT_VALIDATE_EMAIL, {"code": code, "identifier": email},
-                         step_token=step_token)
-        return True
+    async def send_email_code(self, step_token: str, email: str) -> str:
+        """Step 2/3: trigger the emailed 6-digit code. Returns a NEW step token
+        that verify_email() must use — NOT the signin step token (using that on
+        validate/email gives a 401 invalidStepToken)."""
+        _, _, headers = await self._post(
+            ENDPOINT_VALIDATION_EMAIL, {"identifier": email}, step_token=step_token)
+        new_token = headers.get(HEADER_STEP_TOKEN, "")
+        if not new_token:
+            raise YaleAuthError(500, "validation/email did not return a step token")
+        return new_token
 
-    async def get_owner_token(self, email: str, password: str) -> tuple[str, datetime]:
-        """Step 3/3 (and the refresh path): re-sign in with the now-trusted
-        installID, returning (access_token, expiry)."""
-        body = {
-            "identifierType": "email",
-            "identifier": email,
-            "credential": password,
-            "installID": self.install_id,
-            "smsHashString": SMS_HASH,
-        }
-        _, data, headers = await self._post(ENDPOINT_SIGNIN, body)
+    async def verify_email(self, step_token: str, email: str,
+                           code: str) -> tuple[str, datetime]:
+        """Step 3/3: submit the emailed code with the step token from
+        send_email_code(). Returns (access_token, expiry) — the owner session."""
+        _, _, headers = await self._post(
+            ENDPOINT_VALIDATE_EMAIL, {"code": code, "identifier": email},
+            step_token=step_token)
         token = headers.get(HEADER_ACCESS_TOKEN, "")
         if not token:
-            # If the device still needs verification, the token is withheld.
-            raise YaleAuthError(401, "no access token — device not verified or wrong credentials")
+            raise YaleAuthError(401, "no access token — the code may be wrong or expired")
         return token, _token_expiry(token)
+
+    async def get_owner_token(self, email: str, password: str) -> tuple[str, datetime]:
+        """Refresh path: once the installID is verified, a plain signin returns
+        the access token directly (no code needed)."""
+        result = await self.signin(email, password)
+        if not result.access_token:
+            raise YaleAuthError(401, "no access token — device not verified or wrong credentials")
+        return result.access_token, _token_expiry(result.access_token)
 
     async def refresh(self, email: str, password: str) -> tuple[str, datetime]:
         """Refresh = re-signin with the stored, already-trusted installID."""
