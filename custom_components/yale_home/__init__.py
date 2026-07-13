@@ -4,8 +4,9 @@ Authenticates directly to the Yale cloud with the same login the official Yale
 Home app uses (email + password + one-time emailed code), obtaining an
 owner-scope access token. That token grants everything the app can do: lock
 control, PIN / entry-code management, and named-guest management. The API key
-is NOT shipped in this repo — each user supplies their own Yale Home APK at
-setup and the integration extracts the key from it (see apk_extract.py).
+is NOT shipped in this repo — each user pastes their own Yale Home app API key
+at setup (see the README for how to obtain it), keeping Yale's key out of the
+public code.
 """
 from __future__ import annotations
 

@@ -5,10 +5,9 @@ from types import SimpleNamespace
 
 DOMAIN = "yale_home"
 
-# Yale Global backend (public brand). The API key the integration uses is NOT
-# shipped in this repo — each user supplies their own Yale Home APK at setup,
-# and the integration extracts the app key from its native library (see
-# apk_extract.py). This keeps Yale's key out of the public code.
+# Yale Global backend (public brand). The API key is NOT shipped in this repo —
+# each user pastes their own Yale Home app API key at setup, so Yale's key stays
+# out of the public code (see the README for how to obtain it).
 API_BASE_URL = "https://api.aaecosystem.com"
 HEADER_API_KEY = "x-api-key"
 HEADER_ACCESS_TOKEN = "x-access-token"

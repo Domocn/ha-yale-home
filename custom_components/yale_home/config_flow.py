@@ -9,8 +9,6 @@ Step 4: pick the lock + whether it's a parcel box or a door.
 """
 from __future__ import annotations
 
-import os
-import tempfile
 import logging
 import re
 import voluptuous as vol
@@ -22,8 +20,10 @@ from yalexs.const import Brand
 
 _LOGGER = logging.getLogger(__name__)
 
-from .apk_extract import extract_api_key, ExtractionError
 from .auth import YaleAppAuth, YaleAuthError, expiry_iso
+
+_KEY_RE = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 from .const import (
     API_BASE_URL, BRAND_VALUE, HEADER_ACCESS_TOKEN, HEADER_API_KEY,
     HEADER_BRANDING, USER_AGENT,
@@ -51,53 +51,21 @@ def _title(device_type: str, name: str) -> str:
     return f"Yale {noun} ({name})" if name else f"Yale {noun}"
 
 
-async def _download(url: str, session) -> str:
-    """Download a URL to a temp .apk file, returning the path."""
-    fd, tmp = tempfile.mkstemp(suffix=".apk")
-    os.close(fd)
-    async with session.get(url, timeout=120) as resp:
-        resp.raise_for_status()
-        with open(tmp, "wb") as f:
-            async for chunk in resp.content.iter_chunked(65536):
-                f.write(chunk)
-    return tmp
-
-
 class YaleHomeConfigFlow(config_entries.ConfigFlow, domain="yale_home"):
     VERSION = 1
 
     async def async_step_user(self, user_input=None):
-        """Step 1: paste the API key, or provide an APK path/URL."""
+        """Step 1: paste your Yale Home API key (a UUID)."""
         errors: dict[str, str] = {}
         if user_input is not None:
-            source = (user_input.get("apk") or "").strip()
-            if not source:
-                errors["base"] = "bad_apk"
-            elif re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", source):
-                self._api_key = source
+            key = (user_input.get(CONF_API_KEY) or "").strip()
+            if _KEY_RE.fullmatch(key):
+                self._api_key = key
                 return await self.async_step_credentials()
-            else:
-                session = async_get_clientsession(self.hass)
-                try:
-                    if source.startswith(("http://", "https://")):
-                        path = await _download(source, session)
-                        try:
-                            self._api_key = await self.hass.async_add_executor_job(extract_api_key, path)
-                        finally:
-                            os.unlink(path)
-                    else:
-                        self._api_key = await self.hass.async_add_executor_job(extract_api_key, source)
-                except ExtractionError as err:
-                    _LOGGER.warning("APK key extraction failed: %s", err)
-                    errors["base"] = "bad_apk"
-                except Exception as err:
-                    _LOGGER.warning("APK step error: %s", err)
-                    errors["base"] = "bad_apk"
-                else:
-                    return await self.async_step_credentials()
+            errors["base"] = "bad_key"
         return self.async_show_form(
             step_id="user",
-            data_schema=vol.Schema({vol.Required("apk"): str}),
+            data_schema=vol.Schema({vol.Required(CONF_API_KEY): str}),
             errors=errors,
         )
 

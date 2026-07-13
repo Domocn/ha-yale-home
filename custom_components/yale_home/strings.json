@@ -3,9 +3,9 @@
     "step": {
       "user": {
         "title": "Yale Home — API key",
-        "description": "Paste the Yale Home app's API key (a UUID). If you don't have it, you can provide a path to your Yale Home .apk file on your HA server (or a download URL) and the integration will extract it.",
+        "description": "Paste your Yale Home API key (a UUID). See the integration's README for how to obtain it from your own copy of the Yale Home app.",
         "data": {
-          "apk": "API key (UUID) or APK path/URL"
+          "api_key": "API key (UUID)"
         }
       },
       "credentials": {
@@ -41,7 +41,7 @@
       }
     },
     "error": {
-      "bad_apk": "Couldn't extract the key from that file. Make sure it's the Yale Home app (.apk) — or its arm64 split — not just the base APK.",
+      "bad_key": "That doesn't look like a Yale API key. It should be a UUID like 12345678-1234-1234-1234-123456789abc.",
       "invalid_auth": "Wrong email or password. Check them and try again.",
       "invalid_code": "That verification code wasn't accepted. Check the email from Yale and try again — codes expire after a few minutes.",
       "cannot_connect": "Couldn't reach the Yale service. Try again in a moment.",
