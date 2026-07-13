@@ -128,10 +128,7 @@ class YaleHomeConfigFlow(config_entries.ConfigFlow, domain="yale_home"):
                 return await self.async_step_select_lock()
         return self.async_show_form(
             step_id="code",
-            data_schema=vol.Schema({
-                vol.Required("code"): selector.TextSelector(
-                    selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT, pattern=r"\d{6}")),
-            }),
+            data_schema=vol.Schema({vol.Required("code"): str}),
             errors=errors,
             description_placeholders={"email": self._email},
         )
