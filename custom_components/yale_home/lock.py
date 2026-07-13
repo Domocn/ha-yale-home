@@ -11,7 +11,13 @@ from .const import CONF_LOCK_NAME, DOMAIN, ACTION_LOCK, ACTION_UNLATCH, ACTION_U
 
 def _lock_status(coordinator) -> str:
     lock = (coordinator.data or {}).get("lock") or {}
-    return str((lock.get("LockStatus") or {}).get("status") or "").lower()
+    status = str((lock.get("LockStatus") or {}).get("status") or "").lower()
+    if status in ("locked", "unlocked", "locking", "unlocking"):
+        return status
+    # The cloud returns "unknown" for PIN-operated parcel lockers (no live cloud
+    # state, and lock/unlock isn't logged as activity) — they sit locked between
+    # deliveries, so assume locked rather than showing a misleading "unlocked".
+    return "locked"
 
 
 async def async_setup_entry(hass, entry, async_add_entities):

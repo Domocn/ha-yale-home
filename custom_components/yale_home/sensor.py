@@ -206,9 +206,13 @@ class YaleBatterySensor(CoordinatorEntity, SensorEntity):
         if b is None:
             return None
         try:
-            return int(round(float(b)))
+            b = float(b)
         except (TypeError, ValueError):
             return None
+        # Yale reports battery as a 0-1 fraction; convert to a percentage.
+        if b <= 1.0:
+            b *= 100
+        return int(round(b))
 
 
 class YaleConnectivitySensor(CoordinatorEntity, BinarySensorEntity):
