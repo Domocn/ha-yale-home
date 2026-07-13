@@ -38,7 +38,7 @@ during setup.
 ## Installation (HACS — custom repository)
 
 1. HACS → ⋮ (top right) → **Custom repositories**.
-2. Repository: `https://github.com/Domocn/ha-yale-parcel` · Category: **Integration**.
+2. Repository: `https://github.com/Domocn/ha-yale-home` · Category: **Integration**.
 3. Install **Yale Home**, then restart Home Assistant.
 4. Settings → Devices & Services → **Add Integration** → **Yale Home**.
 
