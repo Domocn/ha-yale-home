@@ -38,10 +38,10 @@ from .coordinator import YaleHomeCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-# No LOCK platform — the core `yale` integration already provides the lock with
-# live (PubNub-pushed) state, which a REST poll here can't match. yale_home adds
-# the parcel-box features on top: named codes, guest management, activity, battery.
-PLATFORMS = [Platform.SENSOR, Platform.SWITCH, Platform.TEXT]
+# Core `yale` covers the Yale locks it knows (with live PubNub state), but not
+# this PIN-operated parcel box, so yale_home provides its lock control (as an
+# assumed-state lock — see lock.py) alongside the codes/guests/activity/battery.
+PLATFORMS = [Platform.LOCK, Platform.SENSOR, Platform.SWITCH, Platform.TEXT]
 
 
 def random_pin() -> str:
