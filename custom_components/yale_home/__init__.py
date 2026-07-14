@@ -38,10 +38,10 @@ from .coordinator import YaleHomeCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-# Core `yale` covers the Yale locks it knows (with live PubNub state), but not
-# this PIN-operated parcel box, so yale_home provides its lock control (as an
-# assumed-state lock — see lock.py) alongside the codes/guests/activity/battery.
-PLATFORMS = [Platform.LOCK, Platform.SENSOR, Platform.SWITCH, Platform.TEXT]
+# The lock, battery and connectivity are the official core `yale` integration's
+# job (it holds a live PubNub connection). yale_home does what it's uniquely good
+# at: named entry codes, guest management, code expiry, and activity.
+PLATFORMS = [Platform.SENSOR, Platform.SWITCH, Platform.TEXT]
 
 
 def random_pin() -> str:

@@ -1,10 +1,12 @@
-"""Activity, expiry, battery and connectivity sensors for a Yale lock."""
+"""Activity and code-expiry sensors for a Yale parcel box.
+
+The lock, battery and connectivity live on the core `yale` integration; this
+module is only the parcel-box extras: activity, code count, and expiry.
+"""
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from homeassistant.components.binary_sensor import (BinarySensorDeviceClass,
-                                                    BinarySensorEntity)
 from homeassistant.components.sensor import (SensorDeviceClass, SensorEntity,
                                              StateType)
 from homeassistant.helpers.entity import DeviceInfo
@@ -56,8 +58,6 @@ async def async_setup_entry(hass, entry, async_add_entities):
         YaleTimeSensor(coordinator, lock_id),
         YaleNextExpirySensor(coordinator, lock_id),
         YalePinCommandSensor(coordinator, lock_id),
-        YaleBatterySensor(coordinator, lock_id),
-        YaleConnectivitySensor(coordinator, lock_id),
     ])
 
 
@@ -187,47 +187,4 @@ class YalePinCommandSensor(CoordinatorEntity, SensorEntity):
         }
 
 
-class YaleBatterySensor(CoordinatorEntity, SensorEntity):
-    _attr_has_entity_name = True
-    _attr_name = "Battery"
-    _attr_icon = "mdi:battery"
-    _attr_device_class = SensorDeviceClass.BATTERY
-    _attr_native_unit_of_measurement = "%"
-
-    def __init__(self, coordinator, lock_id):
-        super().__init__(coordinator)
-        self._attr_unique_id = f"{lock_id}_battery"
-        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, lock_id)})
-
-    @property
-    def native_value(self):
-        lock = (self.coordinator.data or {}).get("lock") or {}
-        b = lock.get("battery")
-        if b is None:
-            return None
-        try:
-            b = float(b)
-        except (TypeError, ValueError):
-            return None
-        # Yale reports battery as a 0-1 fraction; convert to a percentage.
-        if b <= 1.0:
-            b *= 100
-        return int(round(b))
-
-
-class YaleConnectivitySensor(CoordinatorEntity, BinarySensorEntity):
-    _attr_has_entity_name = True
-    _attr_name = "Connectivity"
-    _attr_icon = "mdi:wifi"
-    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
-
-    def __init__(self, coordinator, lock_id):
-        super().__init__(coordinator)
-        self._attr_unique_id = f"{lock_id}_connectivity"
-        self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, lock_id)})
-
-    @property
-    def is_on(self):
-        lock = (self.coordinator.data or {}).get("lock") or {}
-        bridge = (lock.get("Bridge") or {}).get("status") or {}
-        return bool(bridge.get("current"))
+# Battery + connectivity intentionally live on the core `yale` integration.
