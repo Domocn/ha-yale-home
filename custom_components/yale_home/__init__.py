@@ -412,17 +412,33 @@ def _register_services(hass: HomeAssistant, entry: ConfigEntry, coordinator) -> 
                     "channel": channel, "message": message.message})
 
             def status(self, pubnub_instance, status):
-                pass
+                # Surfaced so connect/disconnect/error states are visible -
+                # previously silently dropped, hiding why no messages arrived.
+                _LOGGER.info("Yale PubNub status on %s: category=%s error=%s",
+                            channel, getattr(status, "category", None),
+                            getattr(status, "error", None))
+                hass.bus.async_fire("yale_home_pubnub_status", {
+                    "channel": channel,
+                    "category": str(getattr(status, "category", None)),
+                    "error": bool(getattr(status, "error", False))})
 
         listener = _Listener()
         pubnub_client.add_listener(listener)
         pubnub_client.subscribe().channels(channel).execute()
+        # Grace period so the initial connect handshake completes before the
+        # listen window starts - firing status immediately was racing it.
+        await asyncio.sleep(2)
         hass.bus.async_fire("yale_home_pubnub_subscribed", {"channel": channel, "duration": duration})
         try:
             await asyncio.sleep(duration)
         finally:
-            pubnub_client.unsubscribe().channels(channel).execute()
-            await pubnub_client.stop()
+            try:
+                pubnub_client.unsubscribe().channels(channel).execute()
+                await pubnub_client.stop()
+            except Exception as err:  # noqa: BLE001
+                # Cleanup errors (e.g. "Session is closed") shouldn't mask
+                # whether messages were actually received during the window.
+                _LOGGER.debug("Yale PubNub cleanup error (non-fatal): %s", err)
             hass.bus.async_fire("yale_home_pubnub_unsubscribed", {"channel": channel})
 
     async def _dump_guest_credential(call):
