@@ -20,15 +20,18 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.event import async_track_state_change_event
 
 from .auth import YaleAppAuth, expiry_iso, parse_expiry_iso
 from .const import (
     API_BASE_URL, BRAND_VALUE, HEADER_ACCESS_TOKEN, HEADER_API_KEY,
     HEADER_BRANDING, USER_AGENT,
     CONF_ACCESS_TOKEN, CONF_API_KEY, CONF_EMAIL, CONF_HOUSE_ID, CONF_INSTALL_ID,
-    CONF_LOCK_ID, CONF_PASSWORD, CONF_TOKEN_EXPIRY,
+    CONF_LOCK_ID, CONF_PASSWORD, CONF_TOKEN_EXPIRY, CONF_TRIGGER_ENTITY_ID,
     ENDPOINT_ACTIVITIES, ENDPOINT_ADD_USER, ENDPOINT_CREDENTIALS,
-    ENDPOINT_GUESTLIST, ENDPOINT_GUEST_CREDENTIAL, ENDPOINT_LOCK_OPERATE,
+    ENDPOINT_GUESTLIST, ENDPOINT_GUEST_CREDENTIAL, ENDPOINT_GUEST_CREDENTIAL_READ,
+    ENDPOINT_LOCK_INFO, ENDPOINT_LOCK_OPERATE, ENDPOINT_MANAGED_DEVICES,
+    ENDPOINT_KEYPAD_INFO, ENDPOINT_CREATE_SCHEDULE_RULE,
     ENDPOINT_PINS, ENDPOINT_REMOVE_USER, ENDPOINT_UNITY_SETTINGS,
     EVENT_ACTIVITY,
     ACTION_DELETE, ACTION_DISABLE, ACTION_ENABLE, ACTION_LOAD,
@@ -130,6 +133,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "coordinator": coordinator, "session": session, "auth": auth, "data": data,
     }
     _register_activity_events(hass, coordinator)
+    _register_instant_trigger(hass, entry, coordinator)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     _register_services(hass, entry, coordinator)
     return True
@@ -157,6 +161,24 @@ def _register_activity_events(hass: HomeAssistant, coordinator) -> None:
         hass.bus.async_fire(EVENT_ACTIVITY, {"activity": last})
 
     coordinator.async_add_listener(_fire)
+
+
+def _register_instant_trigger(hass: HomeAssistant, entry: ConfigEntry, coordinator) -> None:
+    """Optional CONF_TRIGGER_ENTITY_ID: when a local-push lock entity for the
+    SAME physical lock (e.g. a yalexs_ble or core yale entity) changes
+    state, immediately request a coordinator refresh instead of waiting up
+    to SCAN_INTERVAL seconds. Combines yalexs_ble's instant local BLE state
+    push with this integration's cloud activity/PIN attribution."""
+    trigger_entity_id = entry.data.get(CONF_TRIGGER_ENTITY_ID)
+    if not trigger_entity_id:
+        return
+
+    @callback
+    def _on_trigger_state_change(event) -> None:
+        hass.async_create_task(coordinator.async_request_refresh())
+
+    entry.async_on_unload(
+        async_track_state_change_event(hass, [trigger_entity_id], _on_trigger_state_change))
 
 
 def _register_services(hass: HomeAssistant, entry: ConfigEntry, coordinator) -> None:
@@ -334,6 +356,149 @@ def _register_services(hass: HomeAssistant, entry: ConfigEntry, coordinator) -> 
         hass.bus.async_fire("yale_home_test_signin", result)
 
     hass.services.async_register("yale_home", "test_signin", _test_signin)
+    async def _dump_pubnub_fields(call):
+        """Diagnostic: GET /locks/{id} and fire every field whose name
+        mentions channel/pubsub/pubnub. Yale's app model (Lock.getChannel())
+        reads entity.pubsubChannel/pubsubProtocol/pubsubURL directly from
+        this response - confirming whether (and what) real-time channel
+        info is actually present for this lock."""
+        tok = await _get_tok()
+        url = f"{API_BASE_URL}{ENDPOINT_LOCK_INFO.format(lock_id=lock_id)}"
+        async with coordinator.session.get(url, headers=_headers(api_key, tok), timeout=30) as resp:
+            status = resp.status
+            try:
+                data = await resp.json()
+            except Exception:  # noqa: BLE001
+                data = {}
+        matches = {k: v for k, v in (data or {}).items()
+                  if isinstance(k, str) and any(s in k.lower() for s in ("pubsub", "pubnub", "channel"))}
+        result = {"status": status, "matches": matches, "all_keys": sorted(data) if isinstance(data, dict) else []}
+        _LOGGER.info("Yale pubnub-field dump: %s", result)
+        hass.bus.async_fire("yale_home_pubnub_fields", result)
+
+    async def _dump_credentials(call):
+        tok = await _get_tok()
+        url = f"{API_BASE_URL}{ENDPOINT_CREDENTIALS.format(lock_id=lock_id)}"
+        async with coordinator.session.get(url, headers=_headers(api_key, tok), timeout=30) as resp:
+            status, text = resp.status, await resp.text()
+        _LOGGER.info("Yale credentials dump (%s): %s", status, text[:1000])
+        hass.bus.async_fire("yale_home_credentials", {"status": status, "raw": text[:4000]})
+
+    async def _subscribe_pubnub(call):
+        """Diagnostic: open a short-lived PubNub subscription and fire an
+        event for every message received. Takes pub_key/sub_key/channel from
+        the service call - never hardcoded here, since these are Yale's own
+        app-wide PubNub credentials (cracked from the APK, not meant to be
+        committed to a public repo any more than the API key was)."""
+        from pubnub.pnconfiguration import PNConfiguration
+        from pubnub.pubnub_asyncio import PubNubAsyncio
+        from pubnub.callbacks import SubscribeCallback
+
+        pub_key = call.data["pub_key"]
+        sub_key = call.data["sub_key"]
+        channel = call.data["channel"]
+        duration = call.data.get("duration", 30)
+
+        pnconfig = PNConfiguration()
+        pnconfig.publish_key = pub_key
+        pnconfig.subscribe_key = sub_key
+        pnconfig.uuid = f"yale_home_diag_{secrets.token_hex(4)}"
+        pubnub_client = PubNubAsyncio(pnconfig)
+
+        class _Listener(SubscribeCallback):
+            def message(self, pubnub_instance, message):
+                _LOGGER.info("Yale PubNub message on %s: %s", channel, message.message)
+                hass.bus.async_fire("yale_home_pubnub_message", {
+                    "channel": channel, "message": message.message})
+
+            def status(self, pubnub_instance, status):
+                pass
+
+        listener = _Listener()
+        pubnub_client.add_listener(listener)
+        pubnub_client.subscribe().channels(channel).execute()
+        hass.bus.async_fire("yale_home_pubnub_subscribed", {"channel": channel, "duration": duration})
+        try:
+            await asyncio.sleep(duration)
+        finally:
+            pubnub_client.unsubscribe().channels(channel).execute()
+            await pubnub_client.stop()
+            hass.bus.async_fire("yale_home_pubnub_unsubscribed", {"channel": channel})
+
+    async def _dump_guest_credential(call):
+        """Diagnostic: GET /locks/{id}/users/{otherUserID}/credential (singular -
+        the read-single-credential endpoint, verified from the decompiled
+        Retrofit interface, distinct from the plural one used elsewhere)."""
+        other_user_id = call.data["other_user_id"]
+        tok = await _get_tok()
+        url = f"{API_BASE_URL}{ENDPOINT_GUEST_CREDENTIAL_READ.format(lock_id=lock_id, other_user_id=other_user_id)}"
+        async with coordinator.session.get(url, headers=_headers(api_key, tok), timeout=30) as resp:
+            status, text = resp.status, await resp.text()
+        _LOGGER.info("Yale guest credential dump (%s): %s", status, text[:1000])
+        hass.bus.async_fire("yale_home_guest_credential", {"status": status, "raw": text[:4000]})
+
+    async def _dump_managed_devices(call):
+        """Diagnostic: GET /houses/{houseId}/manageduser/{userId} - 403'd on
+        the weaker HA-Cloud-borrowed token in earlier testing; retest with
+        the owner token this integration logs in with. user_id defaults to
+        'me' if not supplied - adjust if Yale expects a real user ID."""
+        user_id = call.data.get("user_id", "me")
+        tok = await _get_tok()
+        url = f"{API_BASE_URL}{ENDPOINT_MANAGED_DEVICES.format(house_id=coordinator.house_id, user_id=user_id)}"
+        async with coordinator.session.get(url, headers=_headers(api_key, tok), timeout=30) as resp:
+            status, text = resp.status, await resp.text()
+        _LOGGER.info("Yale managed devices dump (%s): %s", status, text[:1000])
+        hass.bus.async_fire("yale_home_managed_devices", {"status": status, "raw": text[:4000]})
+
+    async def _dump_keypad_info(call):
+        """Diagnostic: GET /keypads/{keypadId}."""
+        keypad_id = call.data["keypad_id"]
+        tok = await _get_tok()
+        url = f"{API_BASE_URL}{ENDPOINT_KEYPAD_INFO.format(keypad_id=keypad_id)}"
+        async with coordinator.session.get(url, headers=_headers(api_key, tok), timeout=30) as resp:
+            status, text = resp.status, await resp.text()
+        _LOGGER.info("Yale keypad info (%s): %s", status, text[:1000])
+        hass.bus.async_fire("yale_home_keypad_info", {"status": status, "raw": text[:4000]})
+
+    async def _create_schedule_rule(call):
+        """EXPERIMENTAL: POST rules/rulewithuser/{lockID}/{userID}. The real
+        Rule model uses Joda DateTime + a biweekly RecurrenceRule with
+        custom Gson adapters we haven't observed serializing live, so this
+        body shape is a best-effort guess from decompiled property names -
+        NOT confirmed working. Pass raw_body to override entirely if this
+        guess is wrong; fires the real error either way so you can correct
+        it from evidence rather than more guessing."""
+        other_user_id = call.data["other_user_id"]
+        tok = await _get_tok()
+        url = f"{API_BASE_URL}{ENDPOINT_CREATE_SCHEDULE_RULE.format(lock_id=lock_id, user_id=other_user_id)}"
+        if "raw_body" in call.data:
+            body = call.data["raw_body"]
+        else:
+            start = call.data["start_time"]
+            end = call.data["end_time"]
+            days = call.data.get("recurrence_days")  # e.g. [0,1,2,3,4] Mon-Fri
+            body = {
+                "type": "recurring" if days else "one_time",
+                "startDateTime": start,
+                "endDateTime": end,
+                "credentialAccessType": call.data.get("access_type", "always"),
+            }
+            if days:
+                body["recurrenceDays"] = days
+        async with coordinator.session.post(url, headers=_headers(api_key, tok, json_body=True),
+                                            json=body, timeout=30) as resp:
+            status, text = resp.status, await resp.text()
+        _LOGGER.info("Yale create_schedule_rule (%s): %s", status, text[:1000])
+        hass.bus.async_fire("yale_home_create_schedule_rule", {
+            "status": status, "raw": text[:4000], "sent_body": body})
+
+    hass.services.async_register("yale_home", "dump_keypad_info", _dump_keypad_info)
+    hass.services.async_register("yale_home", "create_schedule_rule", _create_schedule_rule)
+    hass.services.async_register("yale_home", "dump_guest_credential", _dump_guest_credential)
+    hass.services.async_register("yale_home", "dump_managed_devices", _dump_managed_devices)
+    hass.services.async_register("yale_home", "dump_credentials", _dump_credentials)
+    hass.services.async_register("yale_home", "subscribe_pubnub", _subscribe_pubnub)
+    hass.services.async_register("yale_home", "dump_pubnub_fields", _dump_pubnub_fields)
     hass.services.async_register("yale_home", "dump_unity_settings", _dump_unity_settings)
     hass.services.async_register("yale_home", "set_delivery_box_mode", _set_delivery_box_mode)
     hass.services.async_register("yale_home", "enable_delivery_mode", _enable)

@@ -8,6 +8,138 @@ test_signin:
     a rate limit, or a genuine success — instead of guessing from a generic
     "login failed" error elsewhere.
 
+dump_keypad_info:
+  name: Dump keypad info (diagnostic)
+  description: >
+    Read-only diagnostic. Calls GET /keypads/{keypadId} and fires a
+    yale_home_keypad_info event with the raw response.
+  fields:
+    keypad_id:
+      name: Keypad ID
+      required: true
+      selector:
+        text: {}
+
+create_schedule_rule:
+  name: Create schedule rule (experimental)
+  description: >
+    EXPERIMENTAL - not confirmed working. Calls POST
+    rules/rulewithuser/{lockID}/{userID} with a best-effort guessed body
+    shape. Fires yale_home_create_schedule_rule with the real response
+    (including the body that was actually sent) so you can correct the
+    shape from the real error if it's wrong.
+  fields:
+    other_user_id:
+      name: Other user ID
+      required: true
+      selector:
+        text: {}
+    start_time:
+      name: Start time (ISO 8601)
+      required: true
+      selector:
+        text: {}
+    end_time:
+      name: End time (ISO 8601)
+      required: true
+      selector:
+        text: {}
+    recurrence_days:
+      name: Recurrence days (0=Mon..6=Sun)
+      description: Leave blank for a one-time rule instead of recurring.
+      required: false
+      selector:
+        object: {}
+    access_type:
+      name: Access type
+      required: false
+      default: always
+      selector:
+        text: {}
+    raw_body:
+      name: Raw body override
+      description: Overrides all other fields with this exact JSON body.
+      required: false
+      selector:
+        object: {}
+
+dump_guest_credential:
+  name: Dump single guest credential (diagnostic)
+  description: >
+    Read-only diagnostic. Calls GET /locks/{id}/users/{otherUserID}/credential
+    (singular) and fires a yale_home_guest_credential event with the raw
+    response.
+  fields:
+    other_user_id:
+      name: Other user ID
+      required: true
+      selector:
+        text: {}
+
+dump_managed_devices:
+  name: Dump managed devices (diagnostic)
+  description: >
+    Read-only diagnostic. Calls GET /houses/{houseId}/manageduser/{userId}
+    - this 403'd on a weaker borrowed token in earlier testing; checks
+    whether the owner token this integration uses can reach it. Fires a
+    yale_home_managed_devices event with the raw response.
+  fields:
+    user_id:
+      name: User ID
+      description: Defaults to "me" if left blank.
+      required: false
+      selector:
+        text: {}
+
+dump_credentials:
+  name: Dump lock credentials (diagnostic)
+  description: >
+    Read-only diagnostic. Calls GET /locks/{id}/credentials and fires a
+    yale_home_credentials event with the raw response.
+
+subscribe_pubnub:
+  name: Subscribe to PubNub (diagnostic)
+  description: >
+    Opens a short-lived PubNub subscription and fires a
+    yale_home_pubnub_message event for every message received, for
+    `duration` seconds (default 30) before unsubscribing. pub_key/sub_key
+    are Yale's own app-wide PubNub credentials - not stored by this
+    integration, supply them yourself each time you run this.
+  fields:
+    pub_key:
+      name: PubNub publish key
+      required: true
+      selector:
+        text: {}
+    sub_key:
+      name: PubNub subscribe key
+      required: true
+      selector:
+        text: {}
+    channel:
+      name: Channel name
+      description: From dump_pubnub_fields's pubsubChannel value.
+      required: true
+      selector:
+        text: {}
+    duration:
+      name: Listen duration (seconds)
+      required: false
+      default: 30
+      selector:
+        number:
+          min: 5
+          max: 300
+
+dump_pubnub_fields:
+  name: Dump PubNub fields (diagnostic)
+  description: >
+    Read-only diagnostic. Calls GET /locks/{id} and fires a
+    yale_home_pubnub_fields event listing every field whose name mentions
+    channel/pubsub/pubnub, plus the full key list. Confirms whether this
+    lock's status response actually carries a real-time PubNub channel
+    name (Yale's own app reads it from here as pubsubChannel).
+
 dump_unity_settings:
   name: Dump Unity settings (diagnostic)
   description: >

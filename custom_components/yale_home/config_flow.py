@@ -29,7 +29,7 @@ from .const import (
     HEADER_BRANDING, USER_AGENT,
     CONF_ACCESS_TOKEN, CONF_API_KEY, CONF_DEVICE_TYPE, CONF_EMAIL, CONF_HOUSE_ID,
     CONF_INSTALL_ID, CONF_LOCK_ID, CONF_LOCK_NAME, CONF_PASSWORD,
-    CONF_TOKEN_EXPIRY, CONF_DELIVERY_PIN, CONF_DELIVERY_PIN_USER_ID,
+    CONF_TOKEN_EXPIRY, CONF_DELIVERY_PIN, CONF_DELIVERY_PIN_USER_ID, CONF_TRIGGER_ENTITY_ID,
     DEVICE_TYPE_PARCEL, ENDPOINT_PINS, device_labels,
 )
 
@@ -186,17 +186,24 @@ class YaleHomeConfigFlow(config_entries.ConfigFlow, domain="yale_home"):
     async def async_step_reconfigure(self, user_input=None):
         entry = self._get_reconfigure_entry()
         current = entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_PARCEL)
+        current_trigger = entry.data.get(CONF_TRIGGER_ENTITY_ID, "")
         if user_input is not None:
             new_type = user_input[CONF_DEVICE_TYPE]
+            new_trigger = user_input.get(CONF_TRIGGER_ENTITY_ID) or None
             self.hass.config_entries.async_update_entry(
-                entry, data={**entry.data, CONF_DEVICE_TYPE: new_type},
+                entry, data={**entry.data, CONF_DEVICE_TYPE: new_type,
+                            CONF_TRIGGER_ENTITY_ID: new_trigger},
                 title=_title(new_type, entry.data.get(CONF_LOCK_NAME, "")),
             )
             await self.hass.config_entries.async_reload(entry.entry_id)
             return self.async_abort(reason="reconfigured")
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=vol.Schema({vol.Required(CONF_DEVICE_TYPE, default=current): _device_type_selector()}),
+            data_schema=vol.Schema({
+                vol.Required(CONF_DEVICE_TYPE, default=current): _device_type_selector(),
+                vol.Optional(CONF_TRIGGER_ENTITY_ID, default=current_trigger): selector.EntitySelector(
+                    selector.EntitySelectorConfig(domain="lock")),
+            }),
         )
 
     async def _delivery_pin(self, session, api_key, token, lock_id):

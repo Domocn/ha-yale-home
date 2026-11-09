@@ -36,6 +36,18 @@ ENDPOINT_REMOVE_USER = "/locks/{lock_id}/users/{other_user_id}"
 # confirmed live call or traced Retrofit annotation yet. Carries
 # volume/language/ringtone/indicator-light/isDeliveryBoxModeEnabled.
 ENDPOINT_UNITY_SETTINGS = "/locks/{lock_id}/users/settings"
+# Verified from the decompiled Retrofit interface (AAEcosystemRESTApi) —
+# confirms there is NO settings/Unity endpoint anywhere in the real REST API
+# surface at all (final confirmation Delivery Box Mode is BLE-only).
+ENDPOINT_GUEST_CREDENTIAL_READ = "/locks/{lock_id}/users/{other_user_id}/credential"
+ENDPOINT_MANAGED_DEVICES = "/houses/{house_id}/manageduser/{user_id}"
+ENDPOINT_KEYPAD_INFO = "/keypads/{keypad_id}"
+# UNVERIFIED body shape — the real Rule model (Kotlin, Joda DateTime +
+# biweekly RecurrenceRule) needs custom Gson adapters we haven't observed
+# serializing live. Field names below are our best-effort guess from the
+# decompiled property names; test against the real API and adjust from
+# the actual error before trusting this.
+ENDPOINT_CREATE_SCHEDULE_RULE = "rules/rulewithuser/{lock_id}/{user_id}"
 
 SCAN_INTERVAL = 60
 
@@ -44,6 +56,13 @@ CONF_HOUSE_ID = "house_id"
 CONF_LOCK_ID = "lock_id"
 CONF_LOCK_NAME = "lock_name"
 CONF_DELIVERY_PIN = "delivery_pin"
+# Optional: a local-push lock entity (e.g. yalexs_ble, or core yale) for the
+# SAME physical lock. When its state changes, immediately request a
+# coordinator refresh instead of waiting for the next poll interval -
+# combines yalexs_ble's instant local BLE state push with this
+# integration's cloud activity/PIN data for near-instant + attributed
+# updates.
+CONF_TRIGGER_ENTITY_ID = "trigger_entity_id"
 CONF_DELIVERY_PIN_USER_ID = "delivery_pin_user_id"
 CONF_DEVICE_TYPE = "device_type"
 CONF_EMAIL = "email"

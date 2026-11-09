@@ -9,6 +9,8 @@
   "documentation": "https://github.com/Domocn/ha-yale-home",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/Domocn/ha-yale-home/issues",
-  "requirements": [],
-  "version": "3.3.1"
+  "requirements": [
+    "pubnub>=7.0,<8"
+  ],
+  "version": "3.5.0"
 }
