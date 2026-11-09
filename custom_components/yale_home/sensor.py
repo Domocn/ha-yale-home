@@ -7,9 +7,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from homeassistant.components.sensor import (SensorDeviceClass, SensorEntity,
-                                             StateType)
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.typing import StateType
 from homeassistant.util import dt as dt_util
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 

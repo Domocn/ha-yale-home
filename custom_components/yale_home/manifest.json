@@ -12,5 +12,5 @@
   "requirements": [
     "pubnub>=7.0,<8"
   ],
-  "version": "3.5.1"
+  "version": "3.5.2"
 }
