@@ -1,3 +1,13 @@
+test_signin:
+  name: Test sign-in (diagnostic)
+  description: >
+    Calls the raw Yale signin endpoint directly using the email/password/API
+    key already stored in this integration's config entry. Fires a
+    yale_home_test_signin event reporting the real HTTP status and error
+    text, so you can tell apart a bad password, a rejected/rotated API key,
+    a rate limit, or a genuine success — instead of guessing from a generic
+    "login failed" error elsewhere.
+
 dump_unity_settings:
   name: Dump Unity settings (diagnostic)
   description: >

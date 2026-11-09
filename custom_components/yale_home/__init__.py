@@ -295,6 +295,45 @@ def _register_services(hass: HomeAssistant, entry: ConfigEntry, coordinator) -> 
         _LOGGER.info("Yale set_delivery_box_mode result: %s", result)
         hass.bus.async_fire("yale_home_set_delivery_box_mode", result)
 
+    async def _test_signin(call):
+        """Diagnostic: call the raw signin endpoint directly (bypassing the
+        cached/working token) and report exactly what Yale says, so you can
+        tell a bad API key apart from a bad password from the error text."""
+        stored = hass.data.get("yale_home", {}).get(entry.entry_id, {})
+        auth = stored.get("auth")
+        data = stored.get("data", {})
+        email, password = data.get(CONF_EMAIL), data.get(CONF_PASSWORD)
+        if not (auth and email and password):
+            hass.bus.async_fire("yale_home_test_signin", {
+                "error": "No stored auth/email/password found for this entry."})
+            return
+        result = {"api_key_used": f"{auth._api_key[:8]}...{auth._api_key[-4:]}"
+                                  if len(auth._api_key) > 12 else "<short>",
+                  "install_id": auth.install_id}
+        try:
+            signin = await auth.signin(email, password)
+            result["need_verify"] = signin.need_verify
+            result["verify_types"] = signin.verify_types
+            result["require_recaptcha"] = signin.require_recaptcha
+            result["got_access_token_directly"] = bool(signin.access_token)
+            result["outcome"] = "SUCCESS - credentials and API key both accepted"
+        except Exception as err:  # noqa: BLE001
+            status = getattr(err, "status", None)
+            body = getattr(err, "body", str(err))
+            result["error_status"] = status
+            result["error_body"] = str(body)[:500]
+            if status == 401:
+                result["outcome"] = "401 - likely wrong password OR revoked/rotated API key"
+            elif status == 403:
+                result["outcome"] = "403 - API key rejected (wrong/invalid key)"
+            elif status == 429:
+                result["outcome"] = "429 - rate limited, try again later"
+            else:
+                result["outcome"] = f"Unexpected status {status} - see error_body"
+        _LOGGER.info("Yale test_signin result: %s", result)
+        hass.bus.async_fire("yale_home_test_signin", result)
+
+    hass.services.async_register("yale_home", "test_signin", _test_signin)
     hass.services.async_register("yale_home", "dump_unity_settings", _dump_unity_settings)
     hass.services.async_register("yale_home", "set_delivery_box_mode", _set_delivery_box_mode)
     hass.services.async_register("yale_home", "enable_delivery_mode", _enable)
