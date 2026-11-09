@@ -32,6 +32,10 @@ ENDPOINT_CREDENTIALS = "/locks/{lock_id}/credentials"
 ENDPOINT_GUEST_CREDENTIAL = "/locks/{lock_id}/users/{other_user_id}/credentials"
 ENDPOINT_ADD_USER = "/locks/adduser/{lock_id}/{other_user_id}/{type}"
 ENDPOINT_REMOVE_USER = "/locks/{lock_id}/users/{other_user_id}"
+# Unverified method/shape — found as a string constant in the APK, no
+# confirmed live call or traced Retrofit annotation yet. Carries
+# volume/language/ringtone/indicator-light/isDeliveryBoxModeEnabled.
+ENDPOINT_UNITY_SETTINGS = "/locks/{lock_id}/users/settings"
 
 SCAN_INTERVAL = 60
 

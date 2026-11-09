@@ -1,3 +1,29 @@
+dump_unity_settings:
+  name: Dump Unity settings (diagnostic)
+  description: >
+    Read-only diagnostic. Calls the unverified /locks/{id}/users/settings
+    endpoint and fires a yale_home_unity_settings event with the raw
+    response — use it to check whether your lock's settings payload
+    contains an isDeliveryBoxModeEnabled key at all.
+
+set_delivery_box_mode:
+  name: Set delivery box mode (diagnostic write)
+  description: >
+    Diagnostic write — not a verified feature. Reads the current Unity
+    settings, merges in isDeliveryBoxModeEnabled, writes the whole object
+    back, then reads again to show what actually changed. Fires a
+    yale_home_set_delivery_box_mode event with before/after raw responses
+    and status codes. May error, may silently no-op, or may actually work —
+    read the event data to find out.
+  fields:
+    enabled:
+      name: Enabled
+      description: Value to set isDeliveryBoxModeEnabled to.
+      required: false
+      default: true
+      selector:
+        boolean: {}
+
 enable_delivery_mode:
   name: Enable access PIN
   description: Wakes the lock and enables the access PIN so a courier or guest can open it. (a.k.a. delivery mode / guest access)

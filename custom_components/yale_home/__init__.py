@@ -29,7 +29,7 @@ from .const import (
     CONF_LOCK_ID, CONF_PASSWORD, CONF_TOKEN_EXPIRY,
     ENDPOINT_ACTIVITIES, ENDPOINT_ADD_USER, ENDPOINT_CREDENTIALS,
     ENDPOINT_GUESTLIST, ENDPOINT_GUEST_CREDENTIAL, ENDPOINT_LOCK_OPERATE,
-    ENDPOINT_PINS, ENDPOINT_REMOVE_USER,
+    ENDPOINT_PINS, ENDPOINT_REMOVE_USER, ENDPOINT_UNITY_SETTINGS,
     EVENT_ACTIVITY,
     ACTION_DELETE, ACTION_DISABLE, ACTION_ENABLE, ACTION_LOAD,
     ACTION_LOCK, ACTION_UNLOCK, ACTION_UNLATCH,
@@ -254,6 +254,49 @@ def _register_services(hass: HomeAssistant, entry: ConfigEntry, coordinator) -> 
                 raise HomeAssistantError(f"Remove guest failed ({resp.status}): {(await resp.text())[:200]}")
         await coordinator.async_request_refresh()
 
+    async def _dump_unity_settings(call):
+        tok = await _get_tok()
+        url = f"{API_BASE_URL}{ENDPOINT_UNITY_SETTINGS.format(lock_id=lock_id)}"
+        async with coordinator.session.get(url, headers=_headers(api_key, tok), timeout=30) as resp:
+            text = await resp.text()
+            status = resp.status
+        _LOGGER.info("Yale unity settings (%s): %s", status, text[:1000])
+        hass.bus.async_fire("yale_home_unity_settings", {"status": status, "raw": text[:4000]})
+
+    async def _set_delivery_box_mode(call):
+        """Diagnostic write: GET the settings, merge in isDeliveryBoxModeEnabled,
+        PUT the full object back, then GET again to confirm what actually
+        stuck. Unverified endpoint/verb — fires its own event either way so
+        you can see the raw before/after/error without guessing."""
+        enabled = bool(call.data.get("enabled", True))
+        tok = await _get_tok()
+        url = f"{API_BASE_URL}{ENDPOINT_UNITY_SETTINGS.format(lock_id=lock_id)}"
+        async with coordinator.session.get(url, headers=_headers(api_key, tok), timeout=30) as resp:
+            before_status = resp.status
+            before_text = await resp.text()
+        import json as _json
+        try:
+            current = _json.loads(before_text)
+        except ValueError:
+            current = None
+        result = {"before_status": before_status, "before_raw": before_text[:2000]}
+        if not isinstance(current, dict):
+            result["error"] = "GET settings did not return a JSON object"
+            hass.bus.async_fire("yale_home_set_delivery_box_mode", result)
+            return
+        merged = {**current, "isDeliveryBoxModeEnabled": enabled}
+        async with coordinator.session.put(url, headers=_headers(api_key, tok, json_body=True),
+                                           json=merged, timeout=30) as resp:
+            result["put_status"] = resp.status
+            result["put_raw"] = (await resp.text())[:2000]
+        async with coordinator.session.get(url, headers=_headers(api_key, tok), timeout=30) as resp:
+            result["after_status"] = resp.status
+            result["after_raw"] = (await resp.text())[:2000]
+        _LOGGER.info("Yale set_delivery_box_mode result: %s", result)
+        hass.bus.async_fire("yale_home_set_delivery_box_mode", result)
+
+    hass.services.async_register("yale_home", "dump_unity_settings", _dump_unity_settings)
+    hass.services.async_register("yale_home", "set_delivery_box_mode", _set_delivery_box_mode)
     hass.services.async_register("yale_home", "enable_delivery_mode", _enable)
     hass.services.async_register("yale_home", "disable_delivery_mode", _disable)
     hass.services.async_register("yale_home", "create_temp_pin", _create_temp)
